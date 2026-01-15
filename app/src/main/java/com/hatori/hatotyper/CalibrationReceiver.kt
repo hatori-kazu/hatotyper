@@ -6,11 +6,10 @@ import android.content.Intent
 
 class CalibrationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        // アクションが一致するかチェック
         if (intent.action == CalibrationActivity.ACTION_START_OVERLAY) {
-            // 現在のCalibrationActivityのインスタンスを通じてオーバーレイを開始
-            // 注意: Activityが既に裏で生きている前提です
-            val activity = (context.applicationContext as? HatotyperApp)?.currentActivity as? CalibrationActivity
-            activity?.triggerOverlayFromReceiver()
+            // CalibrationActivityのstaticメソッドを呼び出してオーバーレイを起動
+            CalibrationActivity.startOverlayDirectly()
         }
     }
 }
