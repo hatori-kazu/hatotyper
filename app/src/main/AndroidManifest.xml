@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.hatori.hatotyper">
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
@@ -27,16 +28,17 @@
             android:name=".CalibrationActivity"
             android:exported="false"
             android:launchMode="singleTop" />
+
+        <activity 
+            android:name=".MappingListActivity"
+            android:label="マッピング管理"
+            android:exported="false" />
             
         <receiver android:name=".CalibrationReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="com.hatori.hatotyper.ACTION_START_OVERLAY" />
             </intent-filter>
         </receiver>
-
-        <activity 
-            android:name=".MappingListActivity"
-            android:exported="false" />
 
         <service
             android:name=".ScreenCaptureService"
