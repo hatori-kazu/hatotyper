@@ -8,16 +8,18 @@ import androidx.recyclerview.widget.RecyclerView
 
 class RegisteredKeyAdapter(
     private var keys: List<Pair<String, KeyCoord>>,
-    private val onLongClick: (String) -> Unit // 削除用のコールバックを追加
+    private val onLongClick: (String) -> Unit
 ) : RecyclerView.Adapter<RegisteredKeyAdapter.ViewHolder>() {
 
     class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        // android.R.id.text1 は simple_list_item_1 内の標準TextViewのIDです
         val tvInfo: TextView = view.findViewById(android.R.id.text1)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+        // 重要: android.R.layout.simple_list_item_1 と指定します
         val view = LayoutInflater.from(parent.context)
-            .inflate(android.R.id.simple_list_item_1, parent, false)
+            .inflate(android.R.layout.simple_list_item_1, parent, false)
         return ViewHolder(view)
     }
 
@@ -25,7 +27,6 @@ class RegisteredKeyAdapter(
         val (char, coord) = keys[position]
         holder.tvInfo.text = "キー: $char  |  座標: (${coord.x.toInt()}, ${coord.y.toInt()})"
         
-        // 長押しで削除イベントを飛ばす
         holder.itemView.setOnLongClickListener {
             onLongClick(char)
             true
