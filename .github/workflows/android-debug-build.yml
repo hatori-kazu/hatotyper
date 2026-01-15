@@ -21,9 +21,6 @@ jobs:
           distribution: temurin
           java-version: '11'
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x ./gradlew
-
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -34,8 +31,20 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Assemble debug APK
-        run: ./gradlew clean assembleDebug --no-daemon
+      - name: Build (use gradlew if present, otherwise install gradle)
+        shell: bash
+        run: |
+          if [ -f "./gradlew" ]; then
+            echo "Using repository gradlew"
+            chmod +x ./gradlew
+            ./gradlew clean assembleDebug --no-daemon
+          else
+            echo "gradlew not found — installing gradle via apt as fallback"
+            sudo apt-get update -y
+            sudo apt-get install -y gradle
+            gradle --version
+            gradle clean assembleDebug
+          fi
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
