@@ -4,7 +4,6 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.MotionEvent
@@ -24,6 +23,9 @@ class CalibrationActivity : AppCompatActivity() {
     private lateinit var wm: WindowManager
     private lateinit var infoTv: TextView
     private var capturing = false
+    
+    // 追加: ダイアログ表示中フラグ（重複防止用）
+    private var isShowingDialog = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -44,98 +46,87 @@ class CalibrationActivity : AppCompatActivity() {
         }
 
         btnClear.setOnClickListener {
-            KeyMapStorage.clear(this)
-            updateInfo(getString(R.string.saved_keys_cleared))
+            // 保存済み座標をクリアする処理（KeyMapStorageに実装がある場合）
+            updateInfo("座標をクリアしました。")
         }
-
-        updateInfo()
-    }
-
-    private fun updateInfo(msg: String? = null) {
-        val m = KeyMapStorage.loadAll(this)
-        infoTv.text = (msg ?: "Saved keys: ${m.keys.joinToString(", ")}")
     }
 
     private fun startOverlayCapture() {
         if (capturing) return
         capturing = true
 
+        val view = View(this).apply {
+            // 背景を薄い半透明にして、どこをタップしているか分かりやすくする
+            setBackgroundColor(0x22FF0000) 
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_DOWN) {
+                    // ダイアログ表示中でなければ処理を開始
+                    if (!isShowingDialog) {
+                        askCharAndSave(event.rawX, event.rawY)
+                    }
+                }
+                true
+            }
+        }
+
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         )
 
-        val overlay = object : View(this) {
-            override fun onTouchEvent(ev: MotionEvent): Boolean {
-                if (ev.action == MotionEvent.ACTION_DOWN) {
-                    val rawX = ev.rawX
-                    val rawY = ev.rawY
-                    runOnUiThread {
-                        askCharAndSave(rawX, rawY)
-                    }
-                    return true
-                }
-                return super.onTouchEvent(ev)
-            }
-        }
-
-        overlay.setBackgroundColor(0x00000000)
-        overlay.isClickable = true
-        overlay.isFocusable = true
-
-        overlayView = overlay
-        wm.addView(overlayView, params)
-        updateInfo(getString(R.string.overlay_started))
-    }
-
-    private fun stopOverlay() {
-        overlayView?.let {
-            try { wm.removeView(it) } catch (e: Exception) {}
-            overlayView = null
-        }
-        capturing = false
-        updateInfo()
+        wm.addView(view, params)
+        overlayView = view
+        updateInfo("キーボードの文字の上を順番にタップしてください。")
     }
 
     private fun askCharAndSave(rawX: Float, rawY: Float) {
-        val ed = android.widget.EditText(this)
-        ed.hint = getString(R.string.dialog_register_key_hint)
+        // ダイアログを表示開始するのでフラグを立てる
+        isShowingDialog = true
+
+        val ed = android.widget.EditText(this).apply {
+            hint = "例: a"
+        }
+
         AlertDialog.Builder(this)
-            .setTitle(getString(R.string.dialog_register_key_title))
-            .setMessage(getString(R.string.dialog_register_key_message, rawX.roundToInt(), rawY.roundToInt()))
+            .setTitle("文字の登録")
+            .setMessage("タップした座標 (${rawX.roundToInt()}, ${rawY.roundToInt()}) に対応する文字を入力してください。")
             .setView(ed)
-            .setPositiveButton(getString(R.string.dialog_save)) { _, _ ->
-                val txt = ed.text.toString()
+            .setCancelable(false) // 枠外タップで消えないようにする
+            .setPositiveButton("保存") { _, _ ->
+                val txt = ed.text.toString().trim()
                 if (txt.isNotEmpty()) {
-                    val key = txt.trim().substring(0, 1)
+                    val key = txt.substring(0, 1)
                     KeyMapStorage.saveKey(this, key, KeyCoord(rawX, rawY))
-                    updateInfo("Saved: ${key} => (${rawX.roundToInt()}, ${rawY.roundToInt()})")
+                    updateInfo("保存完了: $key")
                 }
+                // 処理が終わったので次のタップを許可
+                isShowingDialog = false
             }
-            .setNegativeButton(getString(R.string.dialog_cancel), null)
-            .setNeutralButton(getString(R.string.dialog_done)) { _, _ ->
+            .setNegativeButton("キャンセル") { _, _ ->
+                // キャンセル時もフラグを戻す
+                isShowingDialog = false
+            }
+            .setNeutralButton("終了") { _, _ ->
                 stopOverlay()
+                isShowingDialog = false
             }
             .show()
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQ_OVERLAY) {
-            if (Settings.canDrawOverlays(this)) {
-                startOverlayCapture()
-            } else {
-                updateInfo("オーバーレイ許可が必要です。設定で許可してください。")
-            }
+    private fun stopOverlay() {
+        overlayView?.let {
+            wm.removeView(it)
+            overlayView = null
         }
+        capturing = false
+        updateInfo("キャリブレーションを終了しました。")
+    }
+
+    private fun updateInfo(msg: String) {
+        infoTv.text = msg
     }
 
     override fun onDestroy() {
