@@ -19,7 +19,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.DisplayMetrics
-import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import com.google.mlkit.vision.common.InputImage
@@ -31,8 +30,6 @@ class ScreenCaptureService : Service() {
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
-    
-    // 日本語認識用エンジン
     private val recognizer = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
     
     private var isAnalyzing = false
@@ -53,9 +50,8 @@ class ScreenCaptureService : Service() {
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("ハトタイパー稼働中")
-            .setContentText("日本語OCRスキャンを実行しています...")
+            .setContentText("フル解像度スキャン実行中...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setOngoing(true)
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -70,7 +66,7 @@ class ScreenCaptureService : Service() {
             
             mediaProjection?.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
-                    LogManager.appendLog(TAG, "システムの停止を検知しました")
+                    LogManager.appendLog(TAG, "停止: システムにより遮断されました")
                     stopSelf()
                 }
             }, Handler(Looper.getMainLooper()))
@@ -87,35 +83,35 @@ class ScreenCaptureService : Service() {
             val metrics = DisplayMetrics()
             wm.defaultDisplay.getRealMetrics(metrics)
 
-            // 【重要】負荷軽減のため、解析用サイズを横幅720pxに固定して計算
-            val targetWidth = 720
-            val aspectRatio = metrics.heightPixels.toFloat() / metrics.widthPixels.toFloat()
-            val targetHeight = (targetWidth * aspectRatio).toInt()
+            // 解像度を下げる処理を廃止し、端末本来の解像度を使用
+            val width = metrics.widthPixels
+            val height = metrics.heightPixels
             val density = metrics.densityDpi
 
-            LogManager.appendLog(TAG, "解析サイズ: ${targetWidth}x${targetHeight}")
+            LogManager.appendLog(TAG, "解析開始: ${width}x${height} (フル解像度)")
 
-            // バッファ数を5に増やして、取りこぼしを防止
-            imageReader = ImageReader.newInstance(targetWidth, targetHeight, PixelFormat.RGBA_8888, 5)
+            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
             
             virtualDisplay = mediaProjection?.createVirtualDisplay(
-                "HatoDisplay", targetWidth, targetHeight, density,
+                "HatoDisplay", width, height, density,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, 
                 imageReader?.surface, null, null
             )
 
             imageReader?.setOnImageAvailableListener({ reader ->
-                val currentTime = System.currentTimeMillis()
+                val image = try { reader.acquireLatestImage() } catch (e: Exception) { null } ?: return@setOnImageAvailableListener
                 
-                // 解析間隔を調整 (700ms)
-                if (currentTime - lastAnalysisTime < 700 || isAnalyzing) {
-                    reader.acquireLatestImage()?.close()
+                val currentTime = System.currentTimeMillis()
+                // 高解像度でのフリーズを避けるため、解析間隔を1秒に固定
+                if (currentTime - lastAnalysisTime < 1000 || isAnalyzing) {
+                    image.close()
                     return@setOnImageAvailableListener
                 }
 
-                val image = try { reader.acquireLatestImage() } catch (e: Exception) { null } ?: return@setOnImageAvailableListener
                 isAnalyzing = true
                 lastAnalysisTime = currentTime
+                
+                LogManager.appendLog(TAG, "--- スキャン実行中 ---")
 
                 val bitmap = imageToBitmap(image)
                 image.close()
@@ -124,50 +120,45 @@ class ScreenCaptureService : Service() {
                     val inputImage = InputImage.fromBitmap(bitmap, 0)
                     recognizer.process(inputImage)
                         .addOnSuccessListener { visionText ->
-                            // 認識結果があればログ出力（デバッグ用）
                             if (visionText.text.isNotEmpty()) {
-                                Log.d(TAG, "OCR読取成功: ${visionText.text.take(20)}")
+                                // 読み取った全内容をオーバーレイに表示
+                                LogManager.appendLog(TAG, "読取: ${visionText.text.replace("\n", " ").take(30)}...")
+                                processDetectedText(visionText.text)
+                            } else {
+                                LogManager.appendLog(TAG, "通知: 文字が検出されませんでした")
                             }
-                            processDetectedText(visionText.text)
                         }
                         .addOnFailureListener { e ->
-                            // モデルダウンロード中の場合はここにエラーが出る
-                            if (e.message?.contains("model") == true) {
-                                LogManager.appendLog(TAG, "モデル準備中...Wi-Fiを確認してください")
-                            } else {
-                                Log.e(TAG, "OCR Error: ${e.message}")
-                            }
+                            // エラー内容をすべてオーバーレイへ
+                            LogManager.appendLog(TAG, "エラー: ${e.localizedMessage}")
                         }
                         .addOnCompleteListener {
                             isAnalyzing = false
                             bitmap.recycle()
                         }
                 } else {
+                    LogManager.appendLog(TAG, "エラー: Bitmap変換失敗")
                     isAnalyzing = false
                 }
-            }, null)
-
-            LogManager.appendLog(TAG, "OCRスキャンを開始しました")
+            }, Handler(Looper.getMainLooper()))
 
         } catch (e: Exception) {
-            LogManager.appendLog(TAG, "起動エラー: ${e.message}")
+            LogManager.appendLog(TAG, "致命的エラー: ${e.message}")
         }
     }
 
     private fun processDetectedText(rawText: String) {
-        // スペースや改行を消して照合しやすくする
         val cleanedText = rawText.replace("\n", "").replace(" ", "").trim()
         val allMappings = KeyMapStorage.getAllMappings(this)
         
-        // 登録単語が含まれているか確認
         val matchedTriggers = allMappings.filter { it.isEnabled && cleanedText.contains(it.trigger) }
                                          .map { it.trigger }
 
         if (matchedTriggers.isNotEmpty()) {
             val combinedID = matchedTriggers.joinToString(",")
+            LogManager.appendLog(TAG, "一致確認: $combinedID")
             MyAccessibilityService.getInstance()?.processText(combinedID)
         } else {
-            // 何もなければリセット
             MyAccessibilityService.getInstance()?.processText("")
         }
     }
@@ -197,6 +188,7 @@ class ScreenCaptureService : Service() {
         imageReader?.close()
         mediaProjection?.stop()
         recognizer.close()
+        LogManager.appendLog(TAG, "サービスを完全に停止しました")
         super.onDestroy()
     }
 }
