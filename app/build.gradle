@@ -4,6 +4,7 @@ plugins {
 }
 
 android {
+    namespace "com.hatori.hatotyper"
     compileSdk 33
 
     defaultConfig {
