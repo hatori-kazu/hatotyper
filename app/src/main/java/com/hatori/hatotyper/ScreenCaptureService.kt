@@ -47,7 +47,7 @@ class ScreenCaptureService : Service() {
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("ハトタイパー稼働中")
-            .setContentText("画面を解析しています...")
+            .setContentText("画面解析プロセスを実行中...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .build()
 
@@ -58,7 +58,7 @@ class ScreenCaptureService : Service() {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (e: Exception) {
-            LogManager.appendLog(TAG, "FGS開始失敗")
+            LogManager.appendLog(TAG, "FGS開始失敗: ${e.message}")
             return START_NOT_STICKY
         }
 
@@ -68,12 +68,11 @@ class ScreenCaptureService : Service() {
             
             mediaProjection?.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
-                    LogManager.appendLog(TAG, "セッション停止")
+                    LogManager.appendLog(TAG, "投影が停止しました")
                     stopSelf()
                 }
             }, null)
             
-            LogManager.appendLog(TAG, "キャプチャセッション開始")
             startCapture()
         }
 
@@ -90,7 +89,8 @@ class ScreenCaptureService : Service() {
             val height = if (metrics.heightPixels > 0) metrics.heightPixels else 1920
             val density = if (metrics.densityDpi > 0) metrics.densityDpi else 440
 
-            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+            // バッファ数を3に増やして安定化
+            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
             
             virtualDisplay = mediaProjection?.createVirtualDisplay(
                 "HatoCaptureDisplay", width, height, density,
@@ -98,48 +98,70 @@ class ScreenCaptureService : Service() {
                 imageReader?.surface, null, null
             )
 
+            LogManager.appendLog(TAG, "VirtualDisplay作成完了: 待機中...")
+
             imageReader?.setOnImageAvailableListener({ reader ->
                 val currentTime = System.currentTimeMillis()
-                if (currentTime - lastAnalysisTime < 600) {
+                
+                // 前回の解析から800ms経過していない場合は破棄して戻る
+                if (currentTime - lastAnalysisTime < 800) {
                     reader.acquireLatestImage()?.close()
                     return@setOnImageAvailableListener
                 }
 
-                if (isAnalyzing) return@setOnImageAvailableListener
-                val image = try { reader.acquireLatestImage() } catch (e: Exception) { null } ?: return@setOnImageAvailableListener
-                
+                if (isAnalyzing) {
+                    reader.acquireLatestImage()?.close()
+                    return@setOnImageAvailableListener
+                }
+
+                val image = try {
+                    reader.acquireLatestImage()
+                } catch (e: Exception) {
+                    null
+                }
+
+                if (image == null) {
+                    return@setOnImageAvailableListener
+                }
+
+                // 解析フラグON
                 isAnalyzing = true
                 lastAnalysisTime = currentTime
+                
+                LogManager.appendLog(TAG, "画像取得: OCR開始")
 
                 val inputImage = try {
                     InputImage.fromMediaImage(image, 0)
                 } catch (e: Exception) {
+                    LogManager.appendLog(TAG, "InputImage作成失敗")
                     image.close()
                     isAnalyzing = false
-                    null
-                } ?: return@setOnImageAvailableListener
+                    return@setOnImageAvailableListener
+                }
 
                 recognizer.process(inputImage)
                     .addOnSuccessListener { visionText ->
                         if (visionText.text.isNotEmpty()) {
-                            LogManager.appendLog(TAG, "認識: ${visionText.text.take(15)}")
+                            LogManager.appendLog(TAG, "OCR結果: ${visionText.text.take(15)}")
                             processDetectedText(visionText.text)
+                        } else {
+                            // 画面に何も文字がない場合もログを出す（デバッグ用）
+                            Log.d(TAG, "文字が検出されませんでした")
                         }
                     }
                     .addOnFailureListener { e ->
                         LogManager.appendLog(TAG, "OCR失敗: ${e.message}")
                     }
                     .addOnCompleteListener {
+                        // 確実に画像を閉じ、フラグを戻す
                         image.close()
                         isAnalyzing = false
+                        Log.d(TAG, "解析サイクル完了")
                     }
             }, null)
-            
-            LogManager.appendLog(TAG, "VirtualDisplay作成完了")
 
         } catch (e: Exception) {
-            LogManager.appendLog(TAG, "起動致命的エラー: ${e.message}")
-            Log.e(TAG, "Fatal error in startCapture", e)
+            LogManager.appendLog(TAG, "致命的エラー: ${e.message}")
         }
     }
 
@@ -162,6 +184,7 @@ class ScreenCaptureService : Service() {
         mediaProjection?.stop()
         imageReader?.close()
         recognizer.close()
+        LogManager.appendLog(TAG, "サービス終了")
         super.onDestroy()
     }
 }
