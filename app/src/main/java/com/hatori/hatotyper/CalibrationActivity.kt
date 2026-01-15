@@ -4,8 +4,10 @@ import android.app.AlertDialog
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.PixelFormat
 import android.net.Uri
 import android.os.Build
@@ -21,11 +23,19 @@ import androidx.core.app.NotificationCompat
 import kotlin.math.roundToInt
 
 class CalibrationActivity : AppCompatActivity() {
+
     companion object {
         private const val REQ_OVERLAY = 2001
         private const val CHANNEL_ID = "calibration_channel"
         private const val NOTIFICATION_ID = 100
-        private const val ACTION_START_CALIB = "com.hatori.hatotyper.START_CALIB"
+        const val ACTION_START_OVERLAY = "com.hatori.hatotyper.ACTION_START_OVERLAY"
+        
+        // Activityが生存している間、外部（Receiver）からアクセス可能にするためのインスタンス保持
+        private var instance: CalibrationActivity? = null
+        
+        fun startOverlayDirectly() {
+            instance?.triggerOverlayFromReceiver()
+        }
     }
 
     private var overlayView: View? = null
@@ -36,34 +46,23 @@ class CalibrationActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_calibration)
+        instance = this
 
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         infoTv = findViewById(R.id.tvInfo)
         val btnStart = findViewById<Button>(R.id.btnStartOverlay)
         val btnClear = findViewById<Button>(R.id.btnClear)
 
-        if (intent?.action == ACTION_START_CALIB) {
-            startOverlayCapture()
-        }
-
         btnStart.setOnClickListener {
-            prepareNextCapture("キーボードを画面に表示させた状態で、通知から開始してください。")
+            prepareNextCapture("ホームに移動しました。通知から座標選択を開始してください。")
         }
 
         btnClear.setOnClickListener {
             updateInfo("座標をクリアしました。")
-            // KeyMapStorage.clear(this) などの処理
+            // KeyMapStorageのクリア処理等
         }
     }
 
-    override fun onNewIntent(intent: Intent?) {
-        super.onNewIntent(intent)
-        if (intent?.action == ACTION_START_CALIB) {
-            startOverlayCapture()
-        }
-    }
-
-    // 次のキャプチャ（または再選択）の準備をしてホームへ戻る共通処理
     private fun prepareNextCapture(message: String) {
         if (!Settings.canDrawOverlays(this)) {
             val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
@@ -73,6 +72,7 @@ class CalibrationActivity : AppCompatActivity() {
         
         showCalibrationNotification()
         
+        // ホーム画面へ移動
         val homeIntent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_HOME)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -88,12 +88,12 @@ class CalibrationActivity : AppCompatActivity() {
             nm.createNotificationChannel(channel)
         }
 
-        val intent = Intent(this, CalibrationActivity::class.java).apply {
-            action = ACTION_START_CALIB
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+        // 画面を開かず、BroadcastReceiverを呼び出す設定
+        val intent = Intent(this, CalibrationReceiver::class.java).apply {
+            action = ACTION_START_OVERLAY
         }
 
-        val pendingIntent = PendingIntent.getActivity(
+        val pendingIntent = PendingIntent.getBroadcast(
             this, 0, intent, 
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -101,13 +101,19 @@ class CalibrationActivity : AppCompatActivity() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_edit)
             .setContentTitle("座標を選択してください")
-            .setContentText("タップしてオーバーレイを表示します")
+            .setContentText("ここをタップしてオーバーレイを表示")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .build()
 
         nm.notify(NOTIFICATION_ID, notification)
+    }
+
+    fun triggerOverlayFromReceiver() {
+        runOnUiThread {
+            startOverlayCapture()
+        }
     }
 
     private fun startOverlayCapture() {
@@ -118,11 +124,9 @@ class CalibrationActivity : AppCompatActivity() {
             setBackgroundColor(0x22FF0000) 
             setOnTouchListener { _, event ->
                 if (event.action == MotionEvent.ACTION_DOWN) {
-                    // タップされたら即座にオーバーレイを消す
                     val tx = event.rawX
                     val ty = event.rawY
-                    stopOverlay() 
-                    // その後、登録画面（ダイアログ）を出す
+                    stopOverlay() // タップされたら即座に消去
                     showRegisterDialog(tx, ty)
                 }
                 true
@@ -142,11 +146,16 @@ class CalibrationActivity : AppCompatActivity() {
     }
 
     private fun showRegisterDialog(rawX: Float, rawY: Float) {
+        // ダイアログを表示するためにActivityを前面に出す
+        val intent = Intent(this, CalibrationActivity::class.java)
+        intent.flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+        startActivity(intent)
+
         val ed = android.widget.EditText(this).apply { hint = "例: a" }
 
         AlertDialog.Builder(this)
             .setTitle("座標の登録")
-            .setMessage("選択した座標: (${rawX.roundToInt()}, ${rawY.roundToInt()})")
+            .setMessage("座標: (${rawX.roundToInt()}, ${rawY.roundToInt()})")
             .setView(ed)
             .setCancelable(false)
             .setPositiveButton("保存して次へ") { _, _ ->
@@ -154,11 +163,9 @@ class CalibrationActivity : AppCompatActivity() {
                 if (txt.isNotEmpty()) {
                     KeyMapStorage.saveKey(this, txt.substring(0, 1), KeyCoord(rawX, rawY))
                 }
-                // 次の文字のために再びホームへ
-                prepareNextCapture("次の文字を通知から開始してください。")
+                prepareNextCapture("次の文字の準備ができました（通知から開始）。")
             }
             .setNeutralButton("座標を再選択") { _, _ ->
-                // 保存せずに再びホームへ戻って通知を出す
                 prepareNextCapture("座標を選択し直してください（通知から開始）。")
             }
             .setNegativeButton("終了", null)
@@ -179,6 +186,7 @@ class CalibrationActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         stopOverlay()
+        instance = null
         super.onDestroy()
     }
 }
