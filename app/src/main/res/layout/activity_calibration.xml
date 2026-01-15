@@ -1,35 +1,71 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="vertical"
-    android:padding="16dp"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:id="@+id/tvTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="キャリブレーション"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="16dp" />
 
     <TextView
         android:id="@+id/tvInfo"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="キャリブレーション設定"
-        android:textSize="18sp"
-        android:textStyle="bold"
-        android:padding="8dp"/>
+        android:text="「開始」を押すとホームに移動します。通知からオーバーレイを起動して座標を登録してください。"
+        android:textSize="14sp"
+        android:layout_marginBottom="16dp" />
 
-    <Button
-        android:id="@+id/btnStartOverlay"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="オーバーレイ開始" />
+        android:orientation="horizontal"
+        android:layout_marginBottom="24dp">
 
-    <Button
-        android:id="@+id/btnClear"
+        <Button
+            android:id="@+id/btnStartOverlay"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="開始"
+            android:layout_marginEnd="8dp" />
+
+        <Button
+            android:id="@+id/btnClear"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="全削除"
+            style="@style/Widget.AppCompat.Button.Colored"
+            android:backgroundTint="#FF5252" />
+    </LinearLayout>
+
+    <View
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="保存済み座標をクリア" />
+        android:layout_height="1dp"
+        android:background="#CCCCCC"
+        android:layout_marginBottom="16dp" />
 
     <TextView
-        android:layout_width="match_parent"
+        android:id="@+id/tvListTitle"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:text="【使い方】\n1. 開始ボタンを押すと透明な幕が表示されます。\n2. キーボードの各文字の場所をタップしてください。\n3. 文字を入力して保存します。"
-        android:textColor="#666666" />
+        android:text="登録済み座標一覧"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="8dp" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvRegisteredKeys"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:scrollbars="vertical" />
+
 </LinearLayout>
