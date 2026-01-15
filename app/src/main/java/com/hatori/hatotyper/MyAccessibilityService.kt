@@ -3,90 +3,65 @@ package com.hatori.hatotyper
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
-import android.os.Build
-import android.util.Log
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
 class MyAccessibilityService : AccessibilityService() {
-    companion object {
-        var instance: MyAccessibilityService? = null
-        private const val TAG = "MyAccService"
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // 必要に応じてイベントをキャッチ
+    }
+
+    override fun onInterrupt() {
+        // サービス中断時の処理
+    }
+
+    /**
+     * 外部（ScreenCaptureServiceなど）から呼び出され、
+     * 特定の文字に対応する座標をタップする
+     */
+    fun tapChar(char: String) {
+        val coordsMap = KeyMapStorage.getCoords(this)
+        val coord = coordsMap[char] ?: return // 座標が登録されていなければ何もしない
+
+        val path = Path()
+        path.moveTo(coord.x, coord.y)
+
+        val gestureBuilder = GestureDescription.Builder()
+        gestureBuilder.addStroke(GestureDescription.StrokeDescription(path, 0, 100))
+        
+        dispatchGesture(gestureBuilder.build(), object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                super.onCompleted(gestureDescription)
+            }
+        }, null)
+    }
+
+    /**
+     * 文字列を受け取り、マッピング（置換）を適用した上で順番にタップする
+     */
+    fun processText(input: String) {
+        // 保存されているマッピング（置換ルール）を取得
+        val mappings = KeyMapStorage.getAllMappings(this)
+        
+        var resultText = input
+        // 有効なマッピングを優先度順（もしあれば）に適用
+        mappings.filter { it.isEnabled }.forEach { map ->
+            if (map.trigger.isNotEmpty()) {
+                resultText = resultText.replace(map.trigger, map.output)
+            }
+        }
+
+        // 置換後の文字列を1文字ずつタップ
+        resultText.forEach { char ->
+            tapChar(char.toString())
+            // 連続タップの間に短いスリープが必要な場合はここで制御（要検討）
+            Thread.sleep(50) 
+        }
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        instance = this
-        if (BuildConfig.ENABLE_VERBOSE_LOG) Log.i(TAG, "AccessibilityService connected")
-    }
-
-    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {}
-
-    override fun onInterrupt() {}
-
-    override fun onDestroy() {
-        super.onDestroy()
-        if (instance === this) instance = null
-    }
-
-    fun currentFocusedCanSetText(): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val focus = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-        return focus != null
-    }
-
-    fun setTextToFocusedField(text: String) {
-        val root = rootInActiveWindow ?: return
-        val focus = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-        if (focus != null) {
-            val args = android.os.Bundle()
-            args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
-            focus.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-        }
-    }
-
-    fun performTapForText(text: String) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            Log.w(TAG, "dispatchGesture requires API 24+")
-            return
-        }
-        if (text.isEmpty()) return
-
-        val keyMap = KeyMapStorage.loadAll(this)
-        if (keyMap.isEmpty()) {
-            Log.w(TAG, "No keymap saved")
-            return
-        }
-
-        val gestureBuilder = GestureDescription.Builder()
-        var startTime: Long = 0
-        val tapDuration = 50L
-        val interDelay = 120L
-
-        text.forEach { ch ->
-            val key = ch.toString()
-            val coord = keyMap[key]
-            if (coord == null) {
-                Log.w(TAG, "No coord for char='$key', skipping")
-                startTime += tapDuration + interDelay
-                return@forEach
-            }
-            val path = Path().apply { moveTo(coord.x, coord.y) }
-            val stroke = GestureDescription.StrokeDescription(path, startTime, tapDuration)
-            gestureBuilder.addStroke(stroke)
-            startTime += tapDuration + interDelay
-        }
-
-        val gesture = gestureBuilder.build()
-        dispatchGesture(gesture, object : GestureResultCallback() {
-            override fun onCompleted(gestureDescription: GestureDescription?) {
-                super.onCompleted(gestureDescription)
-                Log.i(TAG, "Gesture completed for text='$text'")
-            }
-
-            override fun onCancelled(gestureDescription: GestureDescription?) {
-                super.onCancelled(gestureDescription)
-                Log.w(TAG, "Gesture cancelled")
-            }
-        }, null)
+        // サービス開始時の初期設定
     }
 }
