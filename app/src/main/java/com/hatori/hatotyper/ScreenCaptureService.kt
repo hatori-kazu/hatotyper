@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.Image
@@ -35,160 +36,116 @@ class ScreenCaptureService : Service() {
     private var isAnalyzing = false
     private var lastAnalysisTime = 0L
 
+    // 【指定座標】左: 90, 上: 500, 右: 1350, 下: 950
+    private val scanRect = Rect(90, 500, 1350, 950)
+
     companion object {
-        private const val NOTIFICATION_ID = 200
-        private const val CHANNEL_ID = "screen_capture_channel"
         private const val TAG = "HatoCapture"
+        private const val CHANNEL_ID = "screen_capture_channel"
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val resultCode = intent?.getIntExtra("RESULT_CODE", 0) ?: 0
-        val data = intent?.getParcelableExtra<Intent>("DATA")
+        val data = intent?.getParcelableExtra<Intent>("DATA") ?: return START_NOT_STICKY
 
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("ハトタイパー稼働中")
-            .setContentText("フル解像度スキャン実行中...")
+            .setContentText("指定範囲をスキャンしています...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        startForeground(200, notification)
 
-        if (data != null && mediaProjection == null) {
+        if (mediaProjection == null) {
             val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             mediaProjection = mpManager.getMediaProjection(resultCode, data)
             
             mediaProjection?.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
-                    LogManager.appendLog(TAG, "停止: システムにより遮断されました")
+                    LogManager.appendLog(TAG, "停止: システム停止を検知")
                     stopSelf()
                 }
             }, Handler(Looper.getMainLooper()))
             
             startCapture()
         }
-
         return START_STICKY
     }
 
     private fun startCapture() {
-        try {
-            val wm = getSystemService(WINDOW_SERVICE) as WindowManager
-            val metrics = DisplayMetrics()
-            wm.defaultDisplay.getRealMetrics(metrics)
+        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        val metrics = DisplayMetrics()
+        wm.defaultDisplay.getRealMetrics(metrics)
 
-            // 解像度を下げる処理を廃止し、端末本来の解像度を使用
-            val width = metrics.widthPixels
-            val height = metrics.heightPixels
-            val density = metrics.densityDpi
+        // フル解像度でキャプチャを開始
+        imageReader = ImageReader.newInstance(metrics.widthPixels, metrics.heightPixels, PixelFormat.RGBA_8888, 3)
+        virtualDisplay = mediaProjection?.createVirtualDisplay(
+            "HatoDisplay", metrics.widthPixels, metrics.heightPixels, metrics.densityDpi,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, imageReader?.surface, null, null
+        )
 
-            LogManager.appendLog(TAG, "解析開始: ${width}x${height} (フル解像度)")
-
-            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
+        imageReader?.setOnImageAvailableListener({ reader ->
+            val image = try { reader.acquireLatestImage() } catch (e: Exception) { null } ?: return@setOnImageAvailableListener
             
-            virtualDisplay = mediaProjection?.createVirtualDisplay(
-                "HatoDisplay", width, height, density,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, 
-                imageReader?.surface, null, null
-            )
-
-            imageReader?.setOnImageAvailableListener({ reader ->
-                val image = try { reader.acquireLatestImage() } catch (e: Exception) { null } ?: return@setOnImageAvailableListener
-                
-                val currentTime = System.currentTimeMillis()
-                // 高解像度でのフリーズを避けるため、解析間隔を1秒に固定
-                if (currentTime - lastAnalysisTime < 1000 || isAnalyzing) {
-                    image.close()
-                    return@setOnImageAvailableListener
-                }
-
-                isAnalyzing = true
-                lastAnalysisTime = currentTime
-                
-                LogManager.appendLog(TAG, "--- スキャン実行中 ---")
-
-                val bitmap = imageToBitmap(image)
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastAnalysisTime < 1000 || isAnalyzing) {
                 image.close()
+                return@setOnImageAvailableListener
+            }
 
-                if (bitmap != null) {
-                    val inputImage = InputImage.fromBitmap(bitmap, 0)
+            isAnalyzing = true
+            lastAnalysisTime = currentTime
+
+            val fullBitmap = imageToBitmap(image)
+            image.close()
+
+            if (fullBitmap != null) {
+                // 指定された範囲 (Rect) を切り抜く
+                val cropX = scanRect.left.coerceIn(0, fullBitmap.width - 1)
+                val cropY = scanRect.top.coerceIn(0, fullBitmap.height - 1)
+                val cropW = scanRect.width().coerceAtMost(fullBitmap.width - cropX)
+                val cropH = scanRect.height().coerceAtMost(fullBitmap.height - cropY)
+
+                if (cropW > 0 && cropH > 0) {
+                    val croppedBitmap = Bitmap.createBitmap(fullBitmap, cropX, cropY, cropW, cropH)
+                    fullBitmap.recycle()
+
+                    val inputImage = InputImage.fromBitmap(croppedBitmap, 0)
                     recognizer.process(inputImage)
                         .addOnSuccessListener { visionText ->
-                            if (visionText.text.isNotEmpty()) {
-                                // 読み取った全内容をオーバーレイに表示
-                                LogManager.appendLog(TAG, "読取: ${visionText.text.replace("\n", " ").take(30)}...")
-                                processDetectedText(visionText.text)
-                            } else {
-                                LogManager.appendLog(TAG, "通知: 文字が検出されませんでした")
-                            }
+                            // 部分一致の判定へ
+                            processDetectedText(visionText.text)
                         }
                         .addOnFailureListener { e ->
-                            // エラー内容をすべてオーバーレイへ
-                            LogManager.appendLog(TAG, "エラー: ${e.localizedMessage}")
+                            LogManager.appendLog(TAG, "OCRエラー: ${e.localizedMessage}")
                         }
                         .addOnCompleteListener {
                             isAnalyzing = false
-                            bitmap.recycle()
+                            croppedBitmap.recycle()
                         }
                 } else {
-                    LogManager.appendLog(TAG, "エラー: Bitmap変換失敗")
+                    fullBitmap.recycle()
                     isAnalyzing = false
                 }
-            }, Handler(Looper.getMainLooper()))
-
-        } catch (e: Exception) {
-            LogManager.appendLog(TAG, "致命的エラー: ${e.message}")
-        }
+            } else {
+                isAnalyzing = false
+            }
+        }, Handler(Looper.getMainLooper()))
+        
+        LogManager.appendLog(TAG, "スキャン開始: 範囲(${scanRect.left},${scanRect.top})〜(${scanRect.right},${scanRect.bottom})")
     }
 
     private fun processDetectedText(rawText: String) {
         val cleanedText = rawText.replace("\n", "").replace(" ", "").trim()
         val allMappings = KeyMapStorage.getAllMappings(this)
         
+        // 部分一致(contains)でトリガーを確認
         val matchedTriggers = allMappings.filter { it.isEnabled && cleanedText.contains(it.trigger) }
                                          .map { it.trigger }
 
         if (matchedTriggers.isNotEmpty()) {
             val combinedID = matchedTriggers.joinToString(",")
-            LogManager.appendLog(TAG, "一致確認: $combinedID")
-            MyAccessibilityService.getInstance()?.processText(combinedID)
-        } else {
-            MyAccessibilityService.getInstance()?.processText("")
-        }
-    }
-
-    private fun imageToBitmap(image: Image): Bitmap? {
-        return try {
-            val planes = image.planes
-            val buffer = planes[0].buffer
-            val pixelStride = planes[0].pixelStride
-            val rowStride = planes[0].rowStride
-            val rowPadding = rowStride - pixelStride * image.width
-            val bitmap = Bitmap.createBitmap(image.width + rowPadding / pixelStride, image.height, Bitmap.Config.ARGB_8888)
-            bitmap.copyPixelsFromBuffer(buffer)
-            if (rowPadding != 0) Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height) else bitmap
-        } catch (e: Exception) { null }
-    }
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "Capture", NotificationManager.IMPORTANCE_LOW)
-            getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
-        }
-    }
-
-    override fun onDestroy() {
-        virtualDisplay?.release()
-        imageReader?.close()
-        mediaProjection?.stop()
-        recognizer.close()
-        LogManager.appendLog(TAG, "サービスを完全に停止しました")
-        super.onDestroy()
-    }
-}
+            LogManager
