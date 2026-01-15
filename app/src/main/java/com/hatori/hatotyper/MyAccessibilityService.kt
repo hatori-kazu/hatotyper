@@ -2,16 +2,27 @@ package com.hatori.hatotyper
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.Context
 import android.graphics.Path
-import android.os.Handler
-import android.os.Looper
+import android.os.*
 import android.view.accessibility.AccessibilityEvent
 
 class MyAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var lastMatchedID: String = ""
-    private var emptyCount = 0 // 空文字（未検出）をカウントする変数
+    private var emptyCount = 0 
+
+    // バイブレーターの取得
+    private val vibrator by lazy {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            vibratorManager.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
+    }
 
     companion object {
         private var instance: MyAccessibilityService? = null
@@ -25,43 +36,51 @@ class MyAccessibilityService : AccessibilityService() {
     }
 
     fun processText(matchedID: String) {
-        // 1. 文字が検出されなかった場合（空文字）
         if (matchedID.isEmpty()) {
-            // すぐにリセットせず、数回連続で空だった場合のみリセットを許可する
-            // OCRの一瞬のチラつきで再反応するのを防ぐ
             emptyCount++
-            if (emptyCount > 3) { // 約3〜4秒間、文字が見つからなければリセット
+            if (emptyCount >= 3) {
                 if (lastMatchedID != "") {
-                    LogManager.appendLog("HatoAcc", "状態リセット: 文字が消えました")
+                    LogManager.appendLog("HatoAcc", "消失を確認: リセット")
                     lastMatchedID = ""
                 }
             }
             return
         }
 
-        // 2. 文字が検出された場合、空カウントを0に戻す
         emptyCount = 0
+        if (matchedID == lastMatchedID) return
 
-        // 3. 重複チェック（前回と全く同じなら無視）
-        if (matchedID == lastMatchedID) {
-            return
-        }
-        
-        // 4. 新しい文字を認識
         lastMatchedID = matchedID
-        LogManager.appendLog("HatoAcc", "新規検知: $matchedID")
+        LogManager.appendLog("HatoAcc", "検知: $matchedID")
 
-        // 実際のマッピング実行
+        // ★バイブレーションを実行（検知した瞬間に1回震わせる）
+        triggerVibration()
+
+        executeMappings(matchedID)
+    }
+
+    private fun triggerVibration() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // 短く「ブッ」と2回震わせるパターン (待機0ms, 振動100ms, 待機50ms, 振動100ms)
+            val effect = VibrationEffect.createWaveform(longArrayOf(0, 100, 50, 100), -1)
+            vibrator.vibrate(effect)
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(200) // 旧バージョン用
+        }
+    }
+
+    private fun executeMappings(matchedID: String) {
         val allMappings = KeyMapStorage.getAllMappings(this)
         val currentTriggers = matchedID.split(",")
 
         allMappings.filter { it.isEnabled && currentTriggers.contains(it.trigger) }.forEach { map ->
-            LogManager.appendLog("HatoAcc", "実行中: ${map.trigger} -> ${map.output}")
+            LogManager.appendLog("HatoAcc", "実行: [${map.trigger}]")
             
             map.output.forEachIndexed { index, char ->
                 handler.postDelayed({
                     tapChar(char.toString())
-                }, index * 180L) // 間隔を少し広げて安定化
+                }, index * 200L)
             }
         }
     }
