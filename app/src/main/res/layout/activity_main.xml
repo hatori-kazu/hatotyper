@@ -49,10 +49,10 @@
             android:text="マッピング管理" />
 
         <Button
-            android:id="@+id/btnTestInput"
+            android:id="@+id/btnToggleLog"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="入力テスト実行" />
+            android:text="ログ表示を切り替え" />
 
         <TextView
             android:layout_width="match_parent"
