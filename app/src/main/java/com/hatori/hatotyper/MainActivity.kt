@@ -37,23 +37,18 @@ class MainActivity : AppCompatActivity() {
         etTarget.setText(prefs.getString("targetWord", ""))
         etInput.setText(prefs.getString("inputWord", ""))
 
-        // キャプチャ開始ボタン
         btnStartCapture.setOnClickListener {
-            // 設定を保存
             prefs.edit()
                 .putString("targetWord", etTarget.text.toString())
                 .putString("inputWord", etInput.text.toString())
                 .apply()
-
-            // メディアプロジェクションの許可ダイアログを表示
             startActivityForResult(mpManager.createScreenCaptureIntent(), REQ_MEDIA_PROJ)
         }
 
-        // アクセシビリティサービスの有効化ガイド
         btnGuideAcc.setOnClickListener {
             AlertDialog.Builder(this)
-                .setTitle(getString(R.string.guide_acc_title))
-                .setMessage(getString(R.string.guide_acc_message))
+                .setTitle("アクセシビリティの設定")
+                .setMessage("自動入力を行うために、設定画面で「hatotyper」をONにしてください。")
                 .setPositiveButton("設定を開く") { _, _ ->
                     val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                     startActivity(intent)
@@ -62,22 +57,18 @@ class MainActivity : AppCompatActivity() {
                 .show()
         }
 
-        // キャリブレーション画面へ
         btnCalib.setOnClickListener {
             startActivity(Intent(this, CalibrationActivity::class.java))
         }
 
-        // マッピング管理画面へ
         btnManage.setOnClickListener {
             startActivity(Intent(this, MappingListActivity::class.java))
         }
 
-        // テスト入力ボタン
         btnTest.setOnClickListener {
             val input = etInput.text.toString()
             val svc = MyAccessibilityService.instance
             if (svc != null) {
-                // フォーカスがある場合はテキストをセット、ない場合は座標タップを試行
                 if (svc.currentFocusedCanSetText()) {
                     svc.setTextToFocusedField(input)
                 } else {
@@ -93,26 +84,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Android 12対応: 許可を得た直後にフォアグラウンドサービスを開始する
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQ_MEDIA_PROJ) {
-            if (resultCode == Activity.RESULT_OK && data != null) {
-                val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
-                    putExtra("resultCode", resultCode)
-                    putExtra("data", data)
-                }
-                
-                // ContextCompatを使用して安全にフォアグラウンドサービスを開始
-                // これにより Android 12 の開始制限を回避しやすくなります
-                ContextCompat.startForegroundService(this, serviceIntent)
-            } else {
-                // ユーザーがキャンセルした場合などの処理
-                AlertDialog.Builder(this)
-                    .setMessage("画面キャプチャが許可されませんでした。")
-                    .setPositiveButton("OK", null)
-                    .show()
+        if (requestCode == REQ_MEDIA_PROJ && resultCode == Activity.RESULT_OK && data != null) {
+            val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
+                putExtra("resultCode", resultCode)
+                putExtra("data", data)
             }
+            // Android 12対応: ContextCompatを使用して開始
+            ContextCompat.startForegroundService(this, serviceIntent)
         }
     }
 }
