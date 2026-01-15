@@ -9,23 +9,27 @@
         android:id="@+id/tvInfo"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/title_calibration"
+        android:text="キャリブレーション設定"
+        android:textSize="18sp"
+        android:textStyle="bold"
         android:padding="8dp"/>
 
     <Button
         android:id="@+id/btnStartOverlay"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/btn_start_overlay" />
+        android:text="オーバーレイ開始" />
 
     <Button
         android:id="@+id/btnClear"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/btn_clear_keys" />
+        android:text="保存済み座標をクリア" />
 
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/calib_info" />
+        android:layout_marginTop="16dp"
+        android:text="【使い方】\n1. 開始ボタンを押すと透明な幕が表示されます。\n2. キーボードの各文字の場所をタップしてください。\n3. 文字を入力して保存します。"
+        android:textColor="#666666" />
 </LinearLayout>
