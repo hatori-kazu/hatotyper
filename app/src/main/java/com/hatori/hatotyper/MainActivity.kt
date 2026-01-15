@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -18,14 +19,14 @@ import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var logOverlayView: TextView
+    private var logOverlayView: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // ログ用オーバーレイの作成
-        createLogOverlay()
+        // 権限チェックとログビューア準備
+        checkOverlayPermission()
 
         findViewById<Button>(R.id.btnStartCapture).setOnClickListener {
             val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -37,36 +38,54 @@ class MainActivity : AppCompatActivity() {
         }
 
         findViewById<Button>(R.id.btnGuideAcc).setOnClickListener {
-            startActivity(Settings.ACTION_ACCESSIBILITY_SETTINGS.let { Intent(it) })
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
-        // ログの更新を監視
+        findViewById<Button>(R.id.btnManageMappings).setOnClickListener {
+            // AndroidManifestに登録されていればクラッシュしません
+            startActivity(Intent(this, MappingListActivity::class.java))
+        }
+
+        // ログ更新の監視
         LogManager.logMessages.observe(this) { message ->
-            logOverlayView.text = message
+            logOverlayView?.text = message
+        }
+    }
+
+    private fun checkOverlayPermission() {
+        if (!Settings.canDrawOverlays(this)) {
+            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+            startActivityForResult(intent, 1002)
+        } else {
+            createLogOverlay()
         }
     }
 
     private fun createLogOverlay() {
+        if (logOverlayView != null) return
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         logOverlayView = TextView(this).apply {
             setBackgroundColor(Color.parseColor("#AA000000"))
             setTextColor(Color.GREEN)
-            textSize = 10f
-            setPadding(10, 10, 10, 10)
+            textSize = 12f
+            setPadding(20, 20, 20, 20)
+            text = "ログ待機中..."
         }
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
-            400, // ログエリアの高さ
+            300,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.BOTTOM
         }
 
-        if (Settings.canDrawOverlays(this)) {
+        try {
             wm.addView(logOverlayView, params)
+        } catch (e: Exception) {
+            LogManager.appendLog("Main", "オーバーレイ表示失敗: ${e.message}")
         }
     }
 
@@ -77,7 +96,13 @@ class MainActivity : AppCompatActivity() {
                 putExtra("RESULT_CODE", resultCode)
                 putExtra("DATA", data)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } else if (requestCode == 1002) {
+            if (Settings.canDrawOverlays(this)) createLogOverlay()
         }
     }
 }
