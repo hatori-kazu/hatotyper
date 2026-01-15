@@ -5,18 +5,12 @@ on:
   push:
     branches: [ main ]
 
-env:
-  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-  GRADLE_VERSION: 8.4
-
 jobs:
   build:
     runs-on: ubuntu-latest
-    name: Build debug APK
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -24,80 +18,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Cache Gradle user home
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/.gradle-build-action
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*','**/build.gradle*','**/settings.gradle*') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
 
-      - name: Cache Android SDK components
-        uses: actions/cache@v4
-        id: cache-android-sdk
-        with:
-          path: |
-            ${{ env.ANDROID_SDK_ROOT }}/platforms
-            ${{ env.ANDROID_SDK_ROOT }}/build-tools
-            ${{ env.ANDROID_SDK_ROOT }}/platform-tools
-            ${{ env.ANDROID_SDK_ROOT }}/cmdline-tools
-          key: ${{ runner.os }}-androidsdk-${{ hashFiles('**/build.gradle*','**/app/build.gradle*') }}
-          restore-keys: |
-            ${{ runner.os }}-androidsdk-
-
-      - name: Ensure Android SDK components (if missing)
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
-          if [ -d "${ANDROID_SDK_ROOT}/platforms/android-33" ] && [ -d "${ANDROID_SDK_ROOT}/build-tools/33.0.2" ]; then
-            echo "Android SDK components present (cached or preinstalled)."
-          else
-            echo "Attempting to install minimal Android SDK components..."
-            SDKMANAGER=""
-            if command -v sdkmanager >/dev/null 2>&1; then
-              SDKMANAGER="$(command -v sdkmanager)"
-            elif [ -x "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager" ]; then
-              SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
-            elif [ -x "${ANDROID_SDK_ROOT}/cmdline-tools/bin/sdkmanager" ]; then
-              SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/bin/sdkmanager"
-            fi
-
-            if [ -n "$SDKMANAGER" ]; then
-              echo "sdkmanager found at: $SDKMANAGER"
-              yes | "$SDKMANAGER" --sdk_root="${ANDROID_SDK_ROOT}" "platform-tools" "platforms;android-33" "build-tools;33.0.2"
-              yes | "$SDKMANAGER" --sdk_root="${ANDROID_SDK_ROOT}" --licenses || true
-            else
-              echo "sdkmanager not found — cannot auto-install SDK. Initial build may fail without SDK."
-            fi
-          fi
-
-      - name: Add Android SDK tools to PATH
-        run: |
-          echo "${ANDROID_SDK_ROOT}/platform-tools:${ANDROID_SDK_ROOT}/build-tools/33.0.2" >> $GITHUB_PATH
-
-      - name: Build (prefer gradlew, fallback to downloaded Gradle)
-        shell: bash
-        env:
-          GRADLE_USER_HOME: ${{ github.workspace }}/.gradle
-        run: |
-          set -euo pipefail
-          if [ -f "./gradlew" ]; then
-            echo "Using repository gradlew"
-            chmod +x ./gradlew
-            ./gradlew --no-daemon clean assembleDebug
-          else
-            echo "Gradle wrapper not found — downloading Gradle ${GRADLE_VERSION} and running it."
-            DIST="gradle-${GRADLE_VERSION}-bin.zip"
-            URL="https://services.gradle.org/distributions/${DIST}"
-            TMPDIR=$(mktemp -d)
-            curl -sSL "$URL" -o "${TMPDIR}/${DIST}"
-            unzip -q "${TMPDIR}/${DIST}" -d "${TMPDIR}"
-            "${TMPDIR}/gradle-${GRADLE_VERSION}/bin/gradle" --no-daemon clean assembleDebug
-            rm -rf "${TMPDIR}"
-          fi
+      - name: Build (using wrapper)
+        run: ./gradlew --no-daemon clean assembleDebug
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
