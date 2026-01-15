@@ -49,7 +49,7 @@ class ScreenCaptureService : Service() {
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("ハトタイパー稼働中")
-            .setContentText("画面をスキャンしています...")
+            .setContentText("マッピング照合を実行しています...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .build()
 
@@ -62,14 +62,6 @@ class ScreenCaptureService : Service() {
         if (data != null && mediaProjection == null) {
             val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             mediaProjection = mpManager.getMediaProjection(resultCode, data)
-            
-            mediaProjection?.registerCallback(object : MediaProjection.Callback() {
-                override fun onStop() {
-                    LogManager.appendLog(TAG, "キャプチャ停止")
-                    stopSelf()
-                }
-            }, null)
-            
             startCapture()
         }
 
@@ -82,31 +74,20 @@ class ScreenCaptureService : Service() {
             val metrics = DisplayMetrics()
             wm.defaultDisplay.getRealMetrics(metrics)
 
-            val width = metrics.widthPixels
-            val height = metrics.heightPixels
-            val density = metrics.densityDpi
-
-            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
-            
+            imageReader = ImageReader.newInstance(metrics.widthPixels, metrics.heightPixels, PixelFormat.RGBA_8888, 3)
             virtualDisplay = mediaProjection?.createVirtualDisplay(
-                "HatoCaptureDisplay", width, height, density,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, 
-                imageReader?.surface, null, null
+                "HatoDisplay", metrics.widthPixels, metrics.heightPixels, metrics.densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, imageReader?.surface, null, null
             )
-
-            LogManager.appendLog(TAG, "VirtualDisplay作成完了")
 
             imageReader?.setOnImageAvailableListener({ reader ->
                 val currentTime = System.currentTimeMillis()
-                
-                if (currentTime - lastAnalysisTime < 800 || isAnalyzing) {
+                if (currentTime - lastAnalysisTime < 700 || isAnalyzing) {
                     reader.acquireLatestImage()?.close()
                     return@setOnImageAvailableListener
                 }
 
-                val image = try { reader.acquireLatestImage() } catch (e: Exception) { null }
-                if (image == null) return@setOnImageAvailableListener
-
+                val image = try { reader.acquireLatestImage() } catch (e: Exception) { null } ?: return@setOnImageAvailableListener
                 isAnalyzing = true
                 lastAnalysisTime = currentTime
 
@@ -115,29 +96,37 @@ class ScreenCaptureService : Service() {
 
                 if (bitmap != null) {
                     val inputImage = InputImage.fromBitmap(bitmap, 0)
-                    
                     recognizer.process(inputImage)
                         .addOnSuccessListener { visionText ->
-                            if (visionText.text.isNotEmpty()) {
-                                LogManager.appendLog(TAG, "OCR結果: ${visionText.text.take(15)}")
-                                processDetectedText(visionText.text)
-                            }
-                        }
-                        .addOnFailureListener { e ->
-                            LogManager.appendLog(TAG, "OCR失敗: ${e.message}")
+                            processDetectedText(visionText.text)
                         }
                         .addOnCompleteListener {
                             isAnalyzing = false
                             bitmap.recycle()
                         }
                 } else {
-                    LogManager.appendLog(TAG, "Bitmap変換エラー")
                     isAnalyzing = false
                 }
             }, null)
-
         } catch (e: Exception) {
             LogManager.appendLog(TAG, "起動エラー: ${e.message}")
+        }
+    }
+
+    private fun processDetectedText(rawText: String) {
+        val cleanedText = rawText.replace("\n", "").replace(" ", "").trim()
+        val allMappings = KeyMapStorage.getAllMappings(this)
+        
+        // 画面内にある「有効なマッピングのトリガー」だけを抽出
+        val matchedTriggers = allMappings.filter { it.isEnabled && cleanedText.contains(it.trigger) }
+                                         .map { it.trigger }
+
+        if (matchedTriggers.isNotEmpty()) {
+            val combinedID = matchedTriggers.joinToString(",")
+            MyAccessibilityService.getInstance()?.processText(combinedID)
+        } else {
+            // 何も見つからない場合は空文字を送ってAcc側の状態をリセット
+            MyAccessibilityService.getInstance()?.processText("")
         }
     }
 
@@ -148,46 +137,21 @@ class ScreenCaptureService : Service() {
             val pixelStride = planes[0].pixelStride
             val rowStride = planes[0].rowStride
             val rowPadding = rowStride - pixelStride * image.width
-
-            // 第3引数に Config を明示
-            val bitmap = Bitmap.createBitmap(
-                image.width + rowPadding / pixelStride,
-                image.height,
-                Bitmap.Config.ARGB_8888
-            )
+            val bitmap = Bitmap.createBitmap(image.width + rowPadding / pixelStride, image.height, Bitmap.Config.ARGB_8888)
             bitmap.copyPixelsFromBuffer(buffer)
-            
-            if (rowPadding != 0) {
-                Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
-            } else {
-                bitmap
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Bitmap conversion failed", e)
-            null
-        }
-    }
-
-    private fun processDetectedText(rawText: String) {
-        val cleaned = rawText.replace("\n", "").replace(" ", "").trim()
-        if (cleaned.isNotEmpty()) {
-            MyAccessibilityService.getInstance()?.processText(cleaned)
-        }
+            if (rowPadding != 0) Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height) else bitmap
+        } catch (e: Exception) { null }
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "Screen Capture", NotificationManager.IMPORTANCE_LOW)
-            val manager = getSystemService(NotificationManager::class.java)
-            manager?.createNotificationChannel(channel)
+            val channel = NotificationChannel(CHANNEL_ID, "Capture", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
         }
     }
 
     override fun onDestroy() {
-        virtualDisplay?.release()
-        mediaProjection?.stop()
-        imageReader?.close()
-        recognizer.close()
+        virtualDisplay?.release(); mediaProjection?.stop(); imageReader?.close(); recognizer.close()
         super.onDestroy()
     }
 }
