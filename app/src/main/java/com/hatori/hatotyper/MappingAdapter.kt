@@ -1,89 +1,55 @@
 package com.hatori.hatotyper
 
 import android.view.LayoutInflater
-import android.view.MotionEvent
+import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageButton
-import android.widget.ImageView
-import android.widget.Switch
 import android.widget.TextView
-import androidx.recyclerview.widget.DiffUtil
-import androidx.recyclerview.widget.ListAdapter
+import androidx.appcompat.widget.SwitchCompat
 import androidx.recyclerview.widget.RecyclerView
 
 class MappingAdapter(
-    private val listener: Listener,
-    private val startDrag: ((RecyclerView.ViewHolder) -> Unit)? = null
-) : ListAdapter<Mapping, MappingAdapter.VH>(DIFF) {
+    private var mappings: MutableList<Mapping>,
+    private val onEdit: (Mapping) -> Unit,
+    private val onDelete: (Mapping) -> Unit,
+    private val onToggle: (Mapping, Boolean) -> Unit
+) : RecyclerView.Adapter<MappingAdapter.ViewHolder>() {
 
-    interface Listener {
-        fun onEdit(mapping: Mapping)
-        fun onDelete(mapping: Mapping)
-        fun onToggleEnabled(mapping: Mapping, enabled: Boolean)
-        fun onChangePriority(mapping: Mapping, newPriority: Int)
+    class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val tvTrigger: TextView = view.findViewById(R.id.tvTrigger)
+        val tvOutput: TextView = view.findViewById(R.id.tvOutput)
+        val swEnabled: SwitchCompat = view.findViewById(R.id.switchEnabled) // SwitchCompatに修正
+        val btnDelete: ImageButton = view.findViewById(R.id.btnDelete)
+        val btnEdit: ImageButton = view.findViewById(R.id.btnEdit)
     }
 
-    fun onItemMove(fromPosition: Int, toPosition: Int) {
-        if (fromPosition == toPosition) return
-        val tmp = currentList.toMutableList()
-        val item = tmp.removeAt(fromPosition)
-        tmp.add(toPosition, item)
-        submitList(tmp)
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_mapping, parent, false)
+        return ViewHolder(view)
     }
 
-    fun getCurrentListCopy(): List<Mapping> = currentList.toList()
-
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-        val v = LayoutInflater.from(parent.context).inflate(R.layout.item_mapping, parent, false)
-        return VH(v as android.view.ViewGroup)
-    }
-
-    override fun onBindViewHolder(holder: VH, position: Int) {
-        val m = getItem(position)
-        holder.bind(m)
-    }
-
-    inner class VH(itemView: ViewGroup) : RecyclerView.ViewHolder(itemView) {
-        private val ivHandle: ImageView = itemView.findViewById(R.id.ivHandle)
-        private val tvTrigger: TextView = itemView.findViewById(R.id.tvTrigger)
-        private val tvOutput: TextView = itemView.findViewById(R.id.tvOutput)
-        private val tvPriority: TextView = itemView.findViewById(R.id.tvPriority)
-        private val btnUp: ImageButton = itemView.findViewById(R.id.btnUp)
-        private val btnDown: ImageButton = itemView.findViewById(R.id.btnDown)
-        private val swEnabled: Switch = itemView.findViewById(R.id.switchEnabled)
-        private val btnEdit: ImageButton = itemView.findViewById(R.id.btnEdit)
-        private val btnDelete: ImageButton = itemView.findViewById(R.id.btnDelete)
-
-        fun bind(m: Mapping) {
-            tvTrigger.text = m.trigger
-            tvOutput.text = m.output
-            tvPriority.text = m.priority.toString()
-
-            swEnabled.setOnCheckedChangeListener(null)
-            swEnabled.isChecked = m.enabled
-            swEnabled.setOnCheckedChangeListener { _, checked ->
-                listener.onToggleEnabled(m, checked)
-            }
-
-            btnEdit.setOnClickListener { listener.onEdit(m) }
-            btnDelete.setOnClickListener { listener.onDelete(m) }
-
-            btnUp.setOnClickListener { listener.onChangePriority(m, m.priority + 1) }
-            btnDown.setOnClickListener { listener.onChangePriority(m, m.priority - 1) }
-
-            ivHandle.setOnTouchListener { _, ev ->
-                if (ev.action == MotionEvent.ACTION_DOWN) {
-                    startDrag?.invoke(this)
-                }
-                false
-            }
+    override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+        val item = mappings[position]
+        holder.tvTrigger.text = "トリガー: ${item.trigger}"
+        holder.tvOutput.text = "出力: ${item.output}"
+        
+        // リスナーの重複登録を避けるため一度nullにする
+        holder.swEnabled.setOnCheckedChangeListener(null)
+        holder.swEnabled.isChecked = item.isEnabled
+        
+        holder.swEnabled.setOnCheckedChangeListener { _, isChecked ->
+            onToggle(item, isChecked)
         }
+
+        holder.btnEdit.setOnClickListener { onEdit(item) }
+        holder.btnDelete.setOnClickListener { onDelete(item) }
     }
 
-    companion object {
-        private val DIFF = object : DiffUtil.ItemCallback<Mapping>() {
-            override fun areItemsTheSame(oldItem: Mapping, newItem: Mapping): Boolean = oldItem.id == newItem.id
-            override fun areContentsTheSame(oldItem: Mapping, newItem: Mapping): Boolean = oldItem == newItem
-        }
+    override fun getItemCount() = mappings.size
+
+    fun updateData(newList: List<Mapping>) {
+        mappings.clear()
+        mappings.addAll(newList)
+        notifyDataSetChanged()
     }
 }
