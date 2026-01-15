@@ -11,15 +11,18 @@ jobs:
     name: Build debug APK
     runs-on: ubuntu-latest
 
+    env:
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 11
+      - name: Set up JDK 17 (needed for sdkmanager)
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '11'
+          java-version: '17'
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -35,20 +38,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Searching for sdkmanager..."
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
           SDKMANAGER=""
-          # try which
           if command -v sdkmanager >/dev/null 2>&1; then
             SDKMANAGER="$(command -v sdkmanager)"
           fi
-          # try common locations
           for p in \
             "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "/usr/lib/android-sdk/cmdline-tools/latest/bin/sdkmanager" \
-            "/opt/android-sdk/cmdline-tools/latest/bin/sdkmanager" \
-            "/usr/lib/android-sdk/tools/bin/sdkmanager" \
-            "/opt/android-sdk/tools/bin/sdkmanager" ; do
+            "$ANDROID_SDK_ROOT/cmdline-tools/bin/sdkmanager" \
+            "/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager" \
+            "/usr/local/lib/android/sdk/tools/bin/sdkmanager" ; do
             if [ -z "$SDKMANAGER" ] && [ -x "$p" ]; then
               SDKMANAGER="$p"
             fi
@@ -56,15 +55,15 @@ jobs:
 
           if [ -n "$SDKMANAGER" ]; then
             echo "sdkmanager found at: $SDKMANAGER"
-            # Accept licenses and install minimal required SDK components for compileSdk 33
-            yes | "$SDKMANAGER" --sdk_root=${ANDROID_SDK_ROOT:-$ANDROID_HOME} "platform-tools" "platforms;android-33" "build-tools;33.0.2" || true
+            yes | "$SDKMANAGER" --sdk_root="${ANDROID_SDK_ROOT}" "platform-tools" "platforms;android-33" "build-tools;33.0.2" || true
           else
-            echo "sdkmanager not found. Skipping SDK install. If build fails later, add Android SDK/cmdline-tools to the runner or include wrapper and SDK in repo."
+            echo "sdkmanager not found. Skipping SDK install."
           fi
 
-      - name: Build with Gradle (downloaded by Gradle action; no wrapper required)
+      - name: Build with Gradle (no wrapper required)
         uses: gradle/gradle-build-action@v2
         with:
+          gradle-version: '8.4'
           arguments: clean assembleDebug
 
       - name: Upload debug APK artifact
