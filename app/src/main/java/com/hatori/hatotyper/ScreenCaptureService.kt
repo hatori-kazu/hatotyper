@@ -15,7 +15,6 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
 import android.util.DisplayMetrics
-import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import com.google.mlkit.vision.common.InputImage
@@ -35,7 +34,6 @@ class ScreenCaptureService : Service() {
     companion object {
         private const val NOTIFICATION_ID = 200
         private const val CHANNEL_ID = "screen_capture_channel"
-        private const val TAG = "HatoCapture"
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -44,7 +42,7 @@ class ScreenCaptureService : Service() {
         val resultCode = intent?.getIntExtra("RESULT_CODE", 0) ?: 0
         val data = intent?.getParcelableExtra<Intent>("DATA")
 
-        // 1. startForegroundを即座に実行 (Android 14制約)
+        // 1. まず通知を出し、サービスをフォアグラウンド化（最優先）
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("ハトタイパー稼働中")
@@ -59,23 +57,24 @@ class ScreenCaptureService : Service() {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (e: Exception) {
-            LogManager.appendLog(TAG, "FGS開始失敗: ${e.message}")
+            LogManager.appendLog("Capture", "フォアグラウンドサービス開始失敗")
             return START_NOT_STICKY
         }
 
-        // 2. startForeground後にMediaProjectionを取得
+        // 2. startForegroundを実行した後にのみ、MediaProjectionを取得できる
         if (data != null && mediaProjection == null) {
             val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             mediaProjection = mpManager.getMediaProjection(resultCode, data)
             
+            // Android 14以降で必須の登録（キャプチャ停止時の処理）
             mediaProjection?.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
-                    LogManager.appendLog(TAG, "キャプチャが停止されました")
+                    LogManager.appendLog("Capture", "キャプチャ停止")
                     stopSelf()
                 }
             }, null)
             
-            LogManager.appendLog(TAG, "キャプチャ準備完了")
+            LogManager.appendLog("Capture", "キャプチャセッション開始")
             startCapture()
         }
 
@@ -90,13 +89,13 @@ class ScreenCaptureService : Service() {
         imageReader = ImageReader.newInstance(metrics.widthPixels, metrics.heightPixels, PixelFormat.RGBA_8888, 2)
         
         virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "HatoDisplay", metrics.widthPixels, metrics.heightPixels, metrics.densityDpi,
+            "HatoCaptureDisplay", metrics.widthPixels, metrics.heightPixels, metrics.densityDpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, imageReader?.surface, null, null
         )
 
         imageReader?.setOnImageAvailableListener({ reader ->
             val currentTime = System.currentTimeMillis()
-            if (currentTime - lastAnalysisTime < 600) { // 0.6秒間隔
+            if (currentTime - lastAnalysisTime < 600) { // 解析負荷軽減
                 reader.acquireLatestImage()?.close()
                 return@setOnImageAvailableListener
             }
@@ -110,12 +109,12 @@ class ScreenCaptureService : Service() {
             recognizer.process(inputImage)
                 .addOnSuccessListener { visionText ->
                     if (visionText.text.isNotEmpty()) {
-                        LogManager.appendLog(TAG, "認識: ${visionText.text.take(15)}")
+                        LogManager.appendLog("Capture", "認識: ${visionText.text.take(15)}")
                         processDetectedText(visionText.text)
                     }
                 }
                 .addOnFailureListener { e ->
-                    LogManager.appendLog(TAG, "OCRエラー: ${e.message}")
+                    LogManager.appendLog("Capture", "OCRエラー: ${e.message}")
                 }
                 .addOnCompleteListener {
                     image.close()
@@ -129,7 +128,7 @@ class ScreenCaptureService : Service() {
         if (cleaned.isNotEmpty()) {
             val service = MyAccessibilityService.getInstance()
             if (service == null) {
-                LogManager.appendLog(TAG, "エラー: アクセシビリティOFF")
+                LogManager.appendLog("Capture", "AccサービスがOFFです")
             } else {
                 service.processText(cleaned)
             }
@@ -138,7 +137,7 @@ class ScreenCaptureService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "Capture Service", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(CHANNEL_ID, "Screen Capture", NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
