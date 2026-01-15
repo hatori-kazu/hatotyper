@@ -6,9 +6,11 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -47,19 +49,15 @@ class ScreenCaptureService : Service() {
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("ハトタイパー稼働中")
-            .setContentText("画面解析プロセスを実行中...")
+            .setContentText("画面をスキャンしています...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .build()
 
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-            } else {
-                startForeground(NOTIFICATION_ID, notification)
-            }
-        } catch (e: Exception) {
-            LogManager.appendLog(TAG, "FGS開始失敗: ${e.message}")
-            return START_NOT_STICKY
+        // Android 14+ FGS制約対応
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
         }
 
         if (data != null && mediaProjection == null) {
@@ -68,7 +66,7 @@ class ScreenCaptureService : Service() {
             
             mediaProjection?.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
-                    LogManager.appendLog(TAG, "投影が停止しました")
+                    LogManager.appendLog(TAG, "キャプチャ停止")
                     stopSelf()
                 }
             }, null)
@@ -85,11 +83,12 @@ class ScreenCaptureService : Service() {
             val metrics = DisplayMetrics()
             wm.defaultDisplay.getRealMetrics(metrics)
 
-            val width = if (metrics.widthPixels > 0) metrics.widthPixels else 1080
-            val height = if (metrics.heightPixels > 0) metrics.heightPixels else 1920
-            val density = if (metrics.densityDpi > 0) metrics.densityDpi else 440
+            // 解像度が高すぎるとOCRが重いため、負荷軽減が必要な場合はここを調整
+            val width = metrics.widthPixels
+            val height = metrics.heightPixels
+            val density = metrics.densityDpi
 
-            // バッファ数を3に増やして安定化
+            // バッファを3確保して安定化
             imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
             
             virtualDisplay = mediaProjection?.createVirtualDisplay(
@@ -98,93 +97,66 @@ class ScreenCaptureService : Service() {
                 imageReader?.surface, null, null
             )
 
-            LogManager.appendLog(TAG, "VirtualDisplay作成完了: 待機中...")
+            LogManager.appendLog(TAG, "VirtualDisplay作成完了")
 
             imageReader?.setOnImageAvailableListener({ reader ->
                 val currentTime = System.currentTimeMillis()
                 
-                // 前回の解析から800ms経過していない場合は破棄して戻る
-                if (currentTime - lastAnalysisTime < 800) {
+                // 解析間隔（800ms）
+                if (currentTime - lastAnalysisTime < 800 || isAnalyzing) {
                     reader.acquireLatestImage()?.close()
                     return@setOnImageAvailableListener
                 }
 
-                if (isAnalyzing) {
-                    reader.acquireLatestImage()?.close()
-                    return@setOnImageAvailableListener
-                }
+                val image = try { reader.acquireLatestImage() } catch (e: Exception) { null }
+                if (image == null) return@setOnImageAvailableListener
 
-                val image = try {
-                    reader.acquireLatestImage()
-                } catch (e: Exception) {
-                    null
-                }
-
-                if (image == null) {
-                    return@setOnImageAvailableListener
-                }
-
-                // 解析フラグON
                 isAnalyzing = true
                 lastAnalysisTime = currentTime
-                
-                LogManager.appendLog(TAG, "画像取得: OCR開始")
 
-                val inputImage = try {
-                    InputImage.fromMediaImage(image, 0)
-                } catch (e: Exception) {
-                    LogManager.appendLog(TAG, "InputImage作成失敗")
-                    image.close()
-                    isAnalyzing = false
-                    return@setOnImageAvailableListener
-                }
+                // Bitmap変換を介してInputImageを作成
+                val bitmap = imageToBitmap(image)
+                image.close() // Media.Imageは即座に閉じる
 
-                recognizer.process(inputImage)
-                    .addOnSuccessListener { visionText ->
-                        if (visionText.text.isNotEmpty()) {
-                            LogManager.appendLog(TAG, "OCR結果: ${visionText.text.take(15)}")
-                            processDetectedText(visionText.text)
-                        } else {
-                            // 画面に何も文字がない場合もログを出す（デバッグ用）
-                            Log.d(TAG, "文字が検出されませんでした")
+                if (bitmap != null) {
+                    val inputImage = InputImage.fromBitmap(bitmap, 0)
+                    
+                    recognizer.process(inputImage)
+                        .addOnSuccessListener { visionText ->
+                            if (visionText.text.isNotEmpty()) {
+                                LogManager.appendLog(TAG, "OCR結果: ${visionText.text.take(15)}")
+                                processDetectedText(visionText.text)
+                            }
                         }
-                    }
-                    .addOnFailureListener { e ->
-                        LogManager.appendLog(TAG, "OCR失敗: ${e.message}")
-                    }
-                    .addOnCompleteListener {
-                        // 確実に画像を閉じ、フラグを戻す
-                        image.close()
-                        isAnalyzing = false
-                        Log.d(TAG, "解析サイクル完了")
-                    }
+                        .addOnFailureListener { e ->
+                            LogManager.appendLog(TAG, "OCR失敗: ${e.message}")
+                        }
+                        .addOnCompleteListener {
+                            isAnalyzing = false
+                            // Bitmapのメモリ解放
+                            bitmap.recycle()
+                        }
+                } else {
+                    LogManager.appendLog(TAG, "Bitmap変換エラー")
+                    isAnalyzing = false
+                }
             }, null)
 
         } catch (e: Exception) {
-            LogManager.appendLog(TAG, "致命的エラー: ${e.message}")
+            LogManager.appendLog(TAG, "起動エラー: ${e.message}")
         }
     }
 
-    private fun processDetectedText(rawText: String) {
-        val cleaned = rawText.replace("\n", "").replace(" ", "").trim()
-        if (cleaned.isNotEmpty()) {
-            MyAccessibilityService.getInstance()?.processText(cleaned)
-        }
-    }
+    /**
+     * ImageReaderのRGBA画像をBitmapに変換する
+     */
+    private fun imageToBitmap(image: Image): Bitmap? {
+        return try {
+            val planes = image.planes
+            val buffer = planes[0].buffer
+            val pixelStride = planes[0].pixelStride
+            val rowStride = planes[0].rowStride
+            val rowPadding = rowStride - pixelStride * image.width
 
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "Screen Capture", NotificationManager.IMPORTANCE_LOW)
-            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
-        }
-    }
-
-    override fun onDestroy() {
-        virtualDisplay?.release()
-        mediaProjection?.stop()
-        imageReader?.close()
-        recognizer.close()
-        LogManager.appendLog(TAG, "サービス終了")
-        super.onDestroy()
-    }
-}
+            // 正確なサイズでBitmapを作成
+            val bitmap = Bitmap.createBitmap(
