@@ -5,57 +5,58 @@ import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 
 class MyAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
+    private var lastMatchedID: String = ""
 
     companion object {
         private var instance: MyAccessibilityService? = null
-        private const val TAG = "HatoAcc"
         fun getInstance(): MyAccessibilityService? = instance
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        LogManager.appendLog(TAG, "サービス接続完了")
     }
 
-    override fun onInterrupt() { instance = null }
-    override fun onDestroy() { instance = null; super.onDestroy() }
+    fun processText(matchedID: String) {
+        // 1. 重複チェック（画面から消えるまで再反応しない）
+        if (matchedID == lastMatchedID) return
+        
+        lastMatchedID = matchedID
+        if (matchedID.isEmpty()) return
 
-    fun processText(input: String) {
-        val mappings = KeyMapStorage.getAllMappings(this)
-        var resultText = input
-        mappings.filter { it.isEnabled }.forEach { map ->
-            if (map.trigger.isNotEmpty()) resultText = resultText.replace(map.trigger, map.output)
-        }
+        // 2. 実際のマッピング内容に基づきタップ実行
+        val allMappings = KeyMapStorage.getAllMappings(this)
+        val currentTriggers = matchedID.split(",")
 
-        LogManager.appendLog(TAG, "入力開始: $resultText")
-
-        resultText.forEachIndexed { index, char ->
-            handler.postDelayed({ tapChar(char.toString()) }, index * 100L)
+        allMappings.filter { it.isEnabled && currentTriggers.contains(it.trigger) }.forEach { map ->
+            LogManager.appendLog("HatoAcc", "実行中: ${map.trigger} -> ${map.output}")
+            
+            map.output.forEachIndexed { index, char ->
+                handler.postDelayed({
+                    tapChar(char.toString())
+                }, index * 150L)
+            }
         }
     }
 
     private fun tapChar(char: String) {
         val coordsMap = KeyMapStorage.getCoords(this)
-        val coord = coordsMap[char]
+        val coord = coordsMap[char] ?: return
 
-        if (coord != null) {
-            LogManager.appendLog(TAG, "タップ: '$char' (x:${coord.x.toInt()}, y:${coord.y.toInt()})")
-            val path = Path().apply { moveTo(coord.x, coord.y) }
-            val gesture = GestureDescription.Builder()
-                .addStroke(GestureDescription.StrokeDescription(path, 0, 50)).build()
-            
-            dispatchGesture(gesture, null, null)
-        } else {
-            LogManager.appendLog(TAG, "未登録キー: '$char'")
-        }
+        val path = Path().apply { moveTo(coord.x, coord.y) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 80))
+            .build()
+        
+        dispatchGesture(gesture, null, null)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onInterrupt() { instance = null }
+    override fun onDestroy() { instance = null; super.onDestroy() }
 }
