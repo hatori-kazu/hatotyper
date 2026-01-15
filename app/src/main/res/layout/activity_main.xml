@@ -13,48 +13,53 @@
             android:id="@+id/etTarget"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="@string/hint_target" />
+            android:hint="監視する文字（ターゲット）"
+            android:minHeight="48dp" />
 
         <EditText
             android:id="@+id/etInput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="@string/hint_input" />
+            android:hint="自動入力する文字"
+            android:minHeight="48dp" />
 
         <Button
             android:id="@+id/btnStartCapture"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/btn_start_capture" />
+            android:layout_marginTop="16dp"
+            android:text="キャプチャ開始" />
 
         <Button
             android:id="@+id/btnCalibration"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/btn_calibration" />
+            android:text="座標キャリブレーション" />
 
         <Button
             android:id="@+id/btnGuideAcc"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/btn_guide_acc" />
+            android:text="アクセシビリティ設定へ" />
 
         <Button
             android:id="@+id/btnManageMappings"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/btn_manage_mappings" />
+            android:text="マッピング管理" />
 
         <Button
             android:id="@+id/btnTestInput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/btn_test_input" />
+            android:text="入力テスト実行" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/notice_permissions" />
+            android:layout_marginTop="24dp"
+            android:text="※Android 12以降では、開始時に「録画またはキャスト」の許可ダイアログが表示されます。"
+            android:textSize="12sp" />
 
     </LinearLayout>
 </ScrollView>
