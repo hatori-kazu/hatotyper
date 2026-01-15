@@ -3,89 +3,61 @@ package com.hatori.hatotyper
 import android.app.*
 import android.content.Context
 import android.content.Intent
-import android.graphics.ImageFormat
+import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.PixelFormat
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
-import android.os.Handler
-import android.os.HandlerThread
 import android.os.IBinder
-import android.util.Log
+import android.util.DisplayMetrics
+import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 
 class ScreenCaptureService : Service() {
-    private var mediaProjection: MediaProjection? = null
-    private var imageReader: ImageReader? = null
-    private var handler: Handler? = null
-    private lateinit var ocr: OCRProcessor
-    private val TAG = "ScreenCaptureSvc"
 
-    override fun onCreate() {
-        super.onCreate()
-        val thread = HandlerThread("CaptureThread")
-        thread.start()
-        handler = Handler(thread.looper)
-        
-        // OCRプロセッサの初期化
-        ocr = OCRProcessor(this) { recognizedText ->
-            val mappings = MappingStorage.loadAll(this).filter { it.enabled }
-            if (mappings.isNotEmpty()) {
-                for (m in mappings) {
-                    try {
-                        if (recognizedText.contains(m.trigger, ignoreCase = true)) {
-                            MyAccessibilityService.instance?.let { svc ->
-                                if (svc.currentFocusedCanSetText()) {
-                                    svc.setTextToFocusedField(m.output)
-                                } else {
-                                    svc.performTapForText(m.output)
-                                }
-                            }
-                            break // 1つ一致したら終了（優先度順）
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Mapping processing error: ${e.message}")
-                    }
-                }
-            }
-        }
+    private var mediaProjection: MediaProjection? = null
+    private var virtualDisplay: VirtualDisplay? = null
+    private var imageReader: ImageReader? = null
+    private lateinit var windowManager: WindowManager
+
+    companion object {
+        private const val NOTIFICATION_ID = 200
+        private const val CHANNEL_ID = "screen_capture_channel"
     }
 
+    override fun onBind(intent: Intent?): IBinder? = null
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val channelId = createNotificationChannel()
-        
-        // Android 12対応: FLAG_IMMUTABLE を明示的に指定
-        val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        } else {
-            PendingIntent.FLAG_UPDATE_CURRENT
-        }
+        val resultCode = intent?.getIntExtra("RESULT_CODE", Activity.RESULT_CANCELED) ?: Activity.RESULT_CANCELED
+        val data = intent?.getParcelableExtra<Intent>("DATA")
 
-        val notificationIntent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, pendingIntentFlags)
-
-        val notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("hatotyper 実行中")
-            .setContentText("画面上の文字を監視しています")
+        // 1. まず通知を作成してフォアグラウンドサービスを開始する
+        createNotificationChannel()
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("ハトタイパー稼働中")
+            .setContentText("画面を監視しています...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setContentIntent(pendingIntent)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-        // Android 12以降、MediaProjectionを使用する場合は
-        // startForegroundをonStartCommandの冒頭で呼ぶ必要があります
-        startForeground(1, notification)
-
-        val resultCode = intent?.getIntExtra("resultCode", Activity.RESULT_CANCELED) ?: Activity.RESULT_CANCELED
-        val data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            intent?.getParcelableExtra("data", Intent::class.java)
+        // Android 14 (API 34) 以降の必須対応
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         } else {
-            @Suppress("DEPRECATION")
-            intent?.getParcelableExtra("data")
+            startForeground(NOTIFICATION_ID, notification)
         }
 
-        if (resultCode == Activity.RESULT_OK && data != null) {
-            val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        // 2. 通知を表示した後にMediaProjectionを取得（順番が逆だとクラッシュする）
+        if (data != null && mediaProjection == null) {
+            val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             mediaProjection = mpManager.getMediaProjection(resultCode, data)
+            
             startCapture()
         }
 
@@ -93,50 +65,43 @@ class ScreenCaptureService : Service() {
     }
 
     private fun startCapture() {
-        val metrics = resources.displayMetrics
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
-        val density = metrics.densityDpi
+        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val metrics = DisplayMetrics()
+        windowManager.defaultDisplay.getRealMetrics(metrics)
 
-        // ImageFormat.YUV_420_888 は多くの端末で安定して動作します
-        imageReader = ImageReader.newInstance(width, height, ImageFormat.YUV_420_888, 2)
-        mediaProjection?.createVirtualDisplay(
-            "ocr-cap",
-            width, height, density,
-            0,
-            imageReader?.surface, null, handler
+        // 画面解析用のImageReaderを作成
+        imageReader = ImageReader.newInstance(metrics.widthPixels, metrics.heightPixels, PixelFormat.RGBA_8888, 2)
+        
+        virtualDisplay = mediaProjection?.createVirtualDisplay(
+            "ScreenCapture",
+            metrics.widthPixels,
+            metrics.heightPixels,
+            metrics.densityDpi,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            imageReader?.surface,
+            null, null
         )
 
         imageReader?.setOnImageAvailableListener({ reader ->
-            val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
-            try {
-                // ImageUtilを使用してBitmapに変換しOCRを実行
-                val bitmap = ImageUtil.imageToBitmap(image)
-                ocr.processBitmap(bitmap)
-            } catch (e: Exception) {
-                Log.w(TAG, "Image processing error: ${e.message}")
-            } finally {
-                image.close()
-            }
-        }, handler)
+            // ここで定期的に画面を解析するロジック（OCR等）を呼び出す
+            // 解析頻度を調整しないと動作が重くなるため注意
+        }, null)
     }
 
-    private fun createNotificationChannel(): String {
-        val channelId = "hatotyper_channel"
-        val channelName = "Screen Monitoring Service"
+    private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val nm = getSystemService(NotificationManager::class.java)
-            val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_LOW)
-            nm?.createNotificationChannel(channel)
+            val channel = NotificationChannel(
+                CHANNEL_ID, "Screen Capture Service",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
         }
-        return channelId
     }
-
-    override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        virtualDisplay?.release()
         mediaProjection?.stop()
-        imageReader?.close()
         super.onDestroy()
     }
 }
