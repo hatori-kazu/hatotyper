@@ -29,7 +29,6 @@ class ScreenCaptureService : Service() {
     private var imageReader: ImageReader? = null
     private lateinit var windowManager: WindowManager
 
-    // OCR Recognizerの初期化
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     
     private var isAnalyzing = false
@@ -44,10 +43,7 @@ class ScreenCaptureService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val resultCode = intent?.getIntExtra("RESULT_CODE", 0) ?: 0
-        val data = intent?.getParcelableExtra<Intent>("DATA")
-
-        // 1. 通知を表示してフォアグラウンドサービスを開始（Android 14対応）
+        // 1. まず通知を表示してサービスをフォアグラウンド化する (Android 14ではこれが最優先)
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("ハトタイパー稼働中")
@@ -56,16 +52,32 @@ class ScreenCaptureService : Service() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Foreground service start failed: ${e.message}")
+            return START_NOT_STICKY
         }
 
-        // 2. MediaProjectionの取得
+        // 2. フォアグラウンド化した後に、MediaProjection を取得する
+        val resultCode = intent?.getIntExtra("RESULT_CODE", 0) ?: 0
+        val data = intent?.getParcelableExtra<Intent>("DATA")
+
         if (data != null && mediaProjection == null) {
             val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             mediaProjection = mpManager.getMediaProjection(resultCode, data)
+            
+            // Android 14以降での動作安定化のためのコールバック
+            mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    stopSelf()
+                }
+            }, null)
+            
             startCapture()
         }
 
@@ -77,7 +89,7 @@ class ScreenCaptureService : Service() {
         val metrics = DisplayMetrics()
         windowManager.defaultDisplay.getRealMetrics(metrics)
 
-        // 解析用のImageReader作成 (メモリ節約のためバッファは2つ)
+        // 画面解像度を取得してImageReaderを初期化
         imageReader = ImageReader.newInstance(
             metrics.widthPixels, 
             metrics.heightPixels, 
@@ -97,7 +109,6 @@ class ScreenCaptureService : Service() {
 
         imageReader?.setOnImageAvailableListener({ reader ->
             val currentTime = System.currentTimeMillis()
-            // CPU負荷軽減のため、前回の解析から500ms経過するまでスキップ
             if (currentTime - lastAnalysisTime < 500) {
                 val image = reader.acquireLatestImage()
                 image?.close()
@@ -106,16 +117,25 @@ class ScreenCaptureService : Service() {
 
             if (isAnalyzing) return@setOnImageAvailableListener
 
-            val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+            val image = try {
+                reader.acquireLatestImage()
+            } catch (e: Exception) {
+                null
+            } ?: return@setOnImageAvailableListener
+
             isAnalyzing = true
             lastAnalysisTime = currentTime
 
-            // ML Kit用のInputImageを作成
-            val inputImage = InputImage.fromMediaImage(image, 0)
+            val inputImage = try {
+                InputImage.fromMediaImage(image, 0)
+            } catch (e: Exception) {
+                image.close()
+                isAnalyzing = false
+                null
+            } ?: return@setOnImageAvailableListener
 
             recognizer.process(inputImage)
                 .addOnSuccessListener { visionText ->
-                    // 認識されたテキストがあれば処理
                     if (visionText.text.isNotEmpty()) {
                         processDetectedText(visionText.text)
                     }
@@ -131,13 +151,9 @@ class ScreenCaptureService : Service() {
     }
 
     private fun processDetectedText(rawText: String) {
-        // 不要な改行や空白を除去
         val cleanedText = rawText.replace("\n", "").replace(" ", "").trim()
-        
         if (cleanedText.isNotEmpty()) {
             Log.d(TAG, "OCR認識結果: $cleanedText")
-            
-            // アクセシビリティサービスに文字を渡してタップ実行
             MyAccessibilityService.getInstance()?.processText(cleanedText)
         }
     }
@@ -147,7 +163,9 @@ class ScreenCaptureService : Service() {
             val channel = NotificationChannel(
                 CHANNEL_ID, "Screen Capture Service",
                 NotificationManager.IMPORTANCE_LOW
-            )
+            ).apply {
+                description = "画面解析用のフォアグラウンド通知"
+            }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
         }
