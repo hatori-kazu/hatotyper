@@ -11,6 +11,7 @@ class MyAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var lastMatchedID: String = ""
+    private var emptyCount = 0 // 空文字（未検出）をカウントする変数
 
     companion object {
         private var instance: MyAccessibilityService? = null
@@ -20,16 +21,37 @@ class MyAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        LogManager.appendLog("HatoAcc", "操作サービス準備完了")
     }
 
     fun processText(matchedID: String) {
-        // 1. 重複チェック（画面から消えるまで再反応しない）
-        if (matchedID == lastMatchedID) return
-        
-        lastMatchedID = matchedID
-        if (matchedID.isEmpty()) return
+        // 1. 文字が検出されなかった場合（空文字）
+        if (matchedID.isEmpty()) {
+            // すぐにリセットせず、数回連続で空だった場合のみリセットを許可する
+            // OCRの一瞬のチラつきで再反応するのを防ぐ
+            emptyCount++
+            if (emptyCount > 3) { // 約3〜4秒間、文字が見つからなければリセット
+                if (lastMatchedID != "") {
+                    LogManager.appendLog("HatoAcc", "状態リセット: 文字が消えました")
+                    lastMatchedID = ""
+                }
+            }
+            return
+        }
 
-        // 2. 実際のマッピング内容に基づきタップ実行
+        // 2. 文字が検出された場合、空カウントを0に戻す
+        emptyCount = 0
+
+        // 3. 重複チェック（前回と全く同じなら無視）
+        if (matchedID == lastMatchedID) {
+            return
+        }
+        
+        // 4. 新しい文字を認識
+        lastMatchedID = matchedID
+        LogManager.appendLog("HatoAcc", "新規検知: $matchedID")
+
+        // 実際のマッピング実行
         val allMappings = KeyMapStorage.getAllMappings(this)
         val currentTriggers = matchedID.split(",")
 
@@ -39,7 +61,7 @@ class MyAccessibilityService : AccessibilityService() {
             map.output.forEachIndexed { index, char ->
                 handler.postDelayed({
                     tapChar(char.toString())
-                }, index * 150L)
+                }, index * 180L) // 間隔を少し広げて安定化
             }
         }
     }
