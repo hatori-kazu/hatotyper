@@ -14,7 +14,6 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
@@ -25,13 +24,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // ログオーバーレイ権限のチェック
-        if (!Settings.canDrawOverlays(this)) {
-            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-            startActivityForResult(intent, 1002)
-        } else {
-            createLogOverlay()
-        }
+        checkPermissions()
 
         findViewById<Button>(R.id.btnStartCapture).setOnClickListener {
             val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -52,6 +45,15 @@ class MainActivity : AppCompatActivity() {
 
         LogManager.logMessages.observe(this) { message ->
             logOverlayView?.text = message
+        }
+    }
+
+    private fun checkPermissions() {
+        if (!Settings.canDrawOverlays(this)) {
+            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+            startActivityForResult(intent, 1002)
+        } else {
+            createLogOverlay()
         }
     }
 
@@ -79,7 +81,7 @@ class MainActivity : AppCompatActivity() {
         try {
             wm.addView(logOverlayView, params)
         } catch (e: Exception) {
-            LogManager.appendLog("Main", "ログ窓表示エラー")
+            // オーバーレイ表示に失敗してもメイン機能は動くようにする
         }
     }
 
@@ -95,8 +97,6 @@ class MainActivity : AppCompatActivity() {
             } else {
                 startService(serviceIntent)
             }
-        } else if (requestCode == 1002 && Settings.canDrawOverlays(this)) {
-            createLogOverlay()
         }
     }
 }
