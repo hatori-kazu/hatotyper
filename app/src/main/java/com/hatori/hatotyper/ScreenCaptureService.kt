@@ -15,6 +15,7 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import com.google.mlkit.vision.common.InputImage
@@ -34,6 +35,7 @@ class ScreenCaptureService : Service() {
     companion object {
         private const val NOTIFICATION_ID = 200
         private const val CHANNEL_ID = "screen_capture_channel"
+        private const val TAG = "HatoCapture"
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -56,7 +58,7 @@ class ScreenCaptureService : Service() {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (e: Exception) {
-            LogManager.appendLog("Capture", "FGS開始失敗")
+            LogManager.appendLog(TAG, "FGS開始失敗")
             return START_NOT_STICKY
         }
 
@@ -66,13 +68,12 @@ class ScreenCaptureService : Service() {
             
             mediaProjection?.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
-                    LogManager.appendLog("Capture", "セッション停止")
+                    LogManager.appendLog(TAG, "セッション停止")
                     stopSelf()
                 }
             }, null)
             
-            LogManager.appendLog("Capture", "キャプチャセッション開始")
-            // セッション開始直後に確実に開始
+            LogManager.appendLog(TAG, "キャプチャセッション開始")
             startCapture()
         }
 
@@ -83,19 +84,14 @@ class ScreenCaptureService : Service() {
         try {
             val wm = getSystemService(WINDOW_SERVICE) as WindowManager
             val metrics = DisplayMetrics()
-            // getRealMetricsを使用して、ナビゲーションバー等を含む正確なサイズを取得
             wm.defaultDisplay.getRealMetrics(metrics)
 
             val width = if (metrics.widthPixels > 0) metrics.widthPixels else 1080
             val height = if (metrics.heightPixels > 0) metrics.heightPixels else 1920
             val density = if (metrics.densityDpi > 0) metrics.densityDpi else 440
 
-            LogManager.appendLog("Capture", "解像度: ${width}x${height}")
-
-            // ImageReaderの作成
             imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
             
-            // VirtualDisplayの作成 (クラッシュしやすいポイントをtry-catch)
             virtualDisplay = mediaProjection?.createVirtualDisplay(
                 "HatoCaptureDisplay", width, height, density,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, 
@@ -126,12 +122,12 @@ class ScreenCaptureService : Service() {
                 recognizer.process(inputImage)
                     .addOnSuccessListener { visionText ->
                         if (visionText.text.isNotEmpty()) {
-                            LogManager.appendLog("Capture", "認識: ${visionText.text.take(15)}")
+                            LogManager.appendLog(TAG, "認識: ${visionText.text.take(15)}")
                             processDetectedText(visionText.text)
                         }
                     }
                     .addOnFailureListener { e ->
-                        LogManager.appendLog("Capture", "OCR失敗: ${e.message}")
+                        LogManager.appendLog(TAG, "OCR失敗: ${e.message}")
                     }
                     .addOnCompleteListener {
                         image.close()
@@ -139,11 +135,11 @@ class ScreenCaptureService : Service() {
                     }
             }, null)
             
-            LogManager.appendLog("Capture", "VirtualDisplay作成完了")
+            LogManager.appendLog(TAG, "VirtualDisplay作成完了")
 
         } catch (e: Exception) {
-            LogManager.appendLog("Capture", "起動致命的エラー: ${e.message}")
-            Log.e("HatoCapture", "Fatal error in startCapture", e)
+            LogManager.appendLog(TAG, "起動致命的エラー: ${e.message}")
+            Log.e(TAG, "Fatal error in startCapture", e)
         }
     }
 
