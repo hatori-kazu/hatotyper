@@ -1,28 +1,22 @@
 package com.hatori.hatotyper
 
-import android.content.Context
 import android.graphics.Bitmap
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import android.util.Log
+import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 
-class OCRProcessor(private val ctx: Context, private val onTextFound: (String) -> Unit) {
-    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-    private val TAG = "OCRProcessor"
+class OCRProcessor {
+    // 日本語認識エンジンを使用するように変更
+    private val recognizer = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
 
-    fun processBitmap(bitmap: Bitmap) {
+    fun processBitmap(bitmap: Bitmap, callback: (String) -> Unit) {
         val image = InputImage.fromBitmap(bitmap, 0)
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
-                val fullText = visionText.text ?: ""
-                if (fullText.isNotBlank()) {
-                    if (BuildConfig.ENABLE_VERBOSE_LOG) Log.d(TAG, "OCR text: $fullText")
-                    onTextFound(fullText)
-                }
+                callback(visionText.text)
             }
             .addOnFailureListener { e ->
-                Log.w(TAG, "OCR failed: ${e.message}")
+                callback("")
             }
     }
 }
