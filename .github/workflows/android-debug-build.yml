@@ -31,7 +31,38 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Build with Gradle (uses Gradle action to download/run Gradle)
+      - name: Install Android SDK components (if sdkmanager available)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Searching for sdkmanager..."
+          SDKMANAGER=""
+          # try which
+          if command -v sdkmanager >/dev/null 2>&1; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          # try common locations
+          for p in \
+            "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "/usr/lib/android-sdk/cmdline-tools/latest/bin/sdkmanager" \
+            "/opt/android-sdk/cmdline-tools/latest/bin/sdkmanager" \
+            "/usr/lib/android-sdk/tools/bin/sdkmanager" \
+            "/opt/android-sdk/tools/bin/sdkmanager" ; do
+            if [ -z "$SDKMANAGER" ] && [ -x "$p" ]; then
+              SDKMANAGER="$p"
+            fi
+          done
+
+          if [ -n "$SDKMANAGER" ]; then
+            echo "sdkmanager found at: $SDKMANAGER"
+            # Accept licenses and install minimal required SDK components for compileSdk 33
+            yes | "$SDKMANAGER" --sdk_root=${ANDROID_SDK_ROOT:-$ANDROID_HOME} "platform-tools" "platforms;android-33" "build-tools;33.0.2" || true
+          else
+            echo "sdkmanager not found. Skipping SDK install. If build fails later, add Android SDK/cmdline-tools to the runner or include wrapper and SDK in repo."
+          fi
+
+      - name: Build with Gradle (downloaded by Gradle action; no wrapper required)
         uses: gradle/gradle-build-action@v2
         with:
           arguments: clean assembleDebug
