@@ -53,7 +53,6 @@ class ScreenCaptureService : Service() {
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .build()
 
-        // Android 14+ FGS制約対応
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         } else {
@@ -83,12 +82,10 @@ class ScreenCaptureService : Service() {
             val metrics = DisplayMetrics()
             wm.defaultDisplay.getRealMetrics(metrics)
 
-            // 解像度が高すぎるとOCRが重いため、負荷軽減が必要な場合はここを調整
             val width = metrics.widthPixels
             val height = metrics.heightPixels
             val density = metrics.densityDpi
 
-            // バッファを3確保して安定化
             imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
             
             virtualDisplay = mediaProjection?.createVirtualDisplay(
@@ -102,7 +99,6 @@ class ScreenCaptureService : Service() {
             imageReader?.setOnImageAvailableListener({ reader ->
                 val currentTime = System.currentTimeMillis()
                 
-                // 解析間隔（800ms）
                 if (currentTime - lastAnalysisTime < 800 || isAnalyzing) {
                     reader.acquireLatestImage()?.close()
                     return@setOnImageAvailableListener
@@ -114,9 +110,8 @@ class ScreenCaptureService : Service() {
                 isAnalyzing = true
                 lastAnalysisTime = currentTime
 
-                // Bitmap変換を介してInputImageを作成
                 val bitmap = imageToBitmap(image)
-                image.close() // Media.Imageは即座に閉じる
+                image.close()
 
                 if (bitmap != null) {
                     val inputImage = InputImage.fromBitmap(bitmap, 0)
@@ -133,7 +128,6 @@ class ScreenCaptureService : Service() {
                         }
                         .addOnCompleteListener {
                             isAnalyzing = false
-                            // Bitmapのメモリ解放
                             bitmap.recycle()
                         }
                 } else {
@@ -147,9 +141,6 @@ class ScreenCaptureService : Service() {
         }
     }
 
-    /**
-     * ImageReaderのRGBA画像をBitmapに変換する
-     */
     private fun imageToBitmap(image: Image): Bitmap? {
         return try {
             val planes = image.planes
@@ -158,5 +149,45 @@ class ScreenCaptureService : Service() {
             val rowStride = planes[0].rowStride
             val rowPadding = rowStride - pixelStride * image.width
 
-            // 正確なサイズでBitmapを作成
+            // 第3引数に Config を明示
             val bitmap = Bitmap.createBitmap(
+                image.width + rowPadding / pixelStride,
+                image.height,
+                Bitmap.Config.ARGB_8888
+            )
+            bitmap.copyPixelsFromBuffer(buffer)
+            
+            if (rowPadding != 0) {
+                Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
+            } else {
+                bitmap
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Bitmap conversion failed", e)
+            null
+        }
+    }
+
+    private fun processDetectedText(rawText: String) {
+        val cleaned = rawText.replace("\n", "").replace(" ", "").trim()
+        if (cleaned.isNotEmpty()) {
+            MyAccessibilityService.getInstance()?.processText(cleaned)
+        }
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(CHANNEL_ID, "Screen Capture", NotificationManager.IMPORTANCE_LOW)
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.createNotificationChannel(channel)
+        }
+    }
+
+    override fun onDestroy() {
+        virtualDisplay?.release()
+        mediaProjection?.stop()
+        imageReader?.close()
+        recognizer.close()
+        super.onDestroy()
+    }
+}
