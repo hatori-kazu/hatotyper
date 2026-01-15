@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">hatotyper</string>
+
+    <!-- MainActivity -->
+    <string name="title_main">hatotyper</string>
+    <string name="hint_target">検出ワード (ターゲット)</string>
+    <string name="hint_input">入力する文字列</string>
+    <string name="btn_start_capture">画面キャプチャ開始 (MediaProjection)</string>
+    <string name="btn_calibration">キャリブレーション（キーボード座標登録）</string>
+    <string name="btn_guide_acc">アクセシビリティ / オーバーレイ許可の案内</string>
+    <string name="btn_test_input">テスト入力</string>
+    <string name="btn_manage_mappings">マッピング管理</string>
+    <string name="notice_permissions">注意: Accessibility・オーバーレイ・画面キャプチャの許可が必要です。</string>
+
+    <!-- Guide / Permission -->
+    <string name="guide_acc_title">アクセシビリティを有効にしてください</string>
+    <string name="guide_acc_message">設定 → アクセシビリティ → hatotyper を有効にしてください。\n\nまたキャリブレーション（キーボードのキー位置登録）をするために「他のアプリの上に表示」許可が必要です。</string>
+    <string name="btn_open_accessibility_settings">アクセシビリティ設定へ</string>
+    <string name="btn_open_overlay_settings">オーバーレイ許可</string>
+
+    <!-- Calibration -->
+    <string name="title_calibration">キャリブレーション</string>
+    <string name="calib_info">手順:\n1) 設定→他のアプリの上に表示 を許可\n2) キーボードを表示してから「オーバーレイでキャリブレーション開始」を押す\n3) 登録したいキーをタップ→文字を入力して保存</string>
+    <string name="btn_start_overlay">オーバーレイでキャリブレーション開始</string>
+    <string name="btn_clear_keys">保存済みキーをクリア</string>
+    <string name="overlay_started">Overlay started. キーボードを表示した状態で登録したいキーをタップしてください。</string>
+    <string name="saved_keys_cleared">保存済みキーをクリアしました。</string>
+    <string name="dialog_register_key_title">キーを登録</string>
+    <string name="dialog_register_key_hint">例: a または 1</string>
+    <string name="dialog_register_key_message">この座標をどの文字として登録しますか？\n\nx=%1$d, y=%2$d</string>
+    <string name="dialog_save">保存</string>
+    <string name="dialog_cancel">キャンセル</string>
+    <string name="dialog_done">完了</string>
+
+    <!-- Mapping List / Management -->
+    <string name="title_mapping_list">マッピング管理</string>
+    <string name="fab_add_mapping">追加</string>
+    <string name="dialog_add_mapping_title">マッピングを追加</string>
+    <string name="dialog_edit_mapping_title">マッピングを編集</string>
+    <string name="hint_mapping_trigger">認識する文字（トリガー）</string>
+    <string name="hint_mapping_output">入力する文字列（出力）</string>
+    <string name="hint_mapping_priority">優先度（整数, 大きいほど優先）</string>
+    <string name="delete_confirm_title">削除確認</string>
+    <string name="delete_confirm_message">マッピング "%1$s" → "%2$s" を削除しますか？</string>
+
+    <!-- Misc -->
+    <string name="no_mappings">登録されたマッピングはありません。</string>
+    <string name="accessibility_not_connected">Accessibilityサービスが接続されていません。設定で有効にしてください。</string>
+    <string name="test_input_completed">テスト入力を実行しました。</string>
+</resources>
