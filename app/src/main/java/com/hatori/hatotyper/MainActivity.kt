@@ -16,7 +16,6 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val REQUEST_MEDIA_PROJECTION = 1001
-        private const val REQUEST_OVERLAY_PERMISSION = 1002
     }
 
     private lateinit var etTarget: EditText
@@ -29,22 +28,18 @@ class MainActivity : AppCompatActivity() {
         etTarget = findViewById(R.id.etTarget)
         etInput = findViewById(R.id.etInput)
 
-        // キャプチャ開始ボタン
         findViewById<Button>(R.id.btnStartCapture).setOnClickListener {
             startProjection()
         }
 
-        // キャリブレーション画面へ
         findViewById<Button>(R.id.btnCalibration).setOnClickListener {
             startActivity(Intent(this, CalibrationActivity::class.java))
         }
 
-        // アクセシビリティ設定へ案内
         findViewById<Button>(R.id.btnGuideAcc).setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
-        // マッピング管理画面へ
         findViewById<Button>(R.id.btnManageMappings).setOnClickListener {
             startActivity(Intent(this, MappingListActivity::class.java))
         }
@@ -52,6 +47,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun startProjection() {
         val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        // ユーザーに画面キャプチャの許可を求めるダイアログを表示
         startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION)
     }
 
@@ -60,7 +56,6 @@ class MainActivity : AppCompatActivity() {
         
         if (requestCode == REQUEST_MEDIA_PROJECTION) {
             if (resultCode == Activity.RESULT_OK && data != null) {
-                // サービスに結果を渡して起動
                 val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
                     putExtra("RESULT_CODE", resultCode)
                     putExtra("DATA", data)
