@@ -7,14 +7,12 @@ import android.graphics.ImageFormat
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
-import androidx.core.app.NotificationCompat
-import android.app.Activity
 import android.util.Log
-import android.os.SystemClock
-import android.graphics.Bitmap
+import androidx.core.app.NotificationCompat
 
 class ScreenCaptureService : Service() {
     private var mediaProjection: MediaProjection? = null
@@ -28,9 +26,10 @@ class ScreenCaptureService : Service() {
         val thread = HandlerThread("CaptureThread")
         thread.start()
         handler = Handler(thread.looper)
+        
+        // OCRプロセッサの初期化
         ocr = OCRProcessor(this) { recognizedText ->
             val mappings = MappingStorage.loadAll(this).filter { it.enabled }
-            var handled = false
             if (mappings.isNotEmpty()) {
                 for (m in mappings) {
                     try {
@@ -42,26 +41,10 @@ class ScreenCaptureService : Service() {
                                     svc.performTapForText(m.output)
                                 }
                             }
-                            handled = true
-                            break
+                            break // 1つ一致したら終了（優先度順）
                         }
                     } catch (e: Exception) {
-                        Log.w(TAG, "mapping handle error: ${e.message}")
-                    }
-                }
-            }
-
-            if (!handled) {
-                val prefs = getSharedPreferences("app", Context.MODE_PRIVATE)
-                val target = prefs.getString("targetWord", "") ?: ""
-                val input = prefs.getString("inputWord", "") ?: ""
-                if (target.isNotEmpty() && recognizedText.contains(target)) {
-                    MyAccessibilityService.instance?.let { svc ->
-                        if (svc.currentFocusedCanSetText()) {
-                            svc.setTextToFocusedField(input)
-                        } else {
-                            svc.performTapForText(input)
-                        }
+                        Log.e(TAG, "Mapping processing error: ${e.message}")
                     }
                 }
             }
@@ -70,19 +53,42 @@ class ScreenCaptureService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val channelId = createNotificationChannel()
-        val notif = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("hatotyper")
-            .setContentText("Monitoring screen for target words")
+        
+        // Android 12対応: FLAG_IMMUTABLE を明示的に指定
+        val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+
+        val notificationIntent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, pendingIntentFlags)
+
+        val notification = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("hatotyper 実行中")
+            .setContentText("画面上の文字を監視しています")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setContentIntent(pendingIntent)
             .build()
-        startForeground(2, notif)
 
-        val resultCode = intent?.getIntExtra("resultCode", Activity.RESULT_CANCELED) ?: return START_NOT_STICKY
-        val data = intent.getParcelableExtra<Intent>("data") ?: return START_NOT_STICKY
+        // Android 12以降、MediaProjectionを使用する場合は
+        // startForegroundをonStartCommandの冒頭で呼ぶ必要があります
+        startForeground(1, notification)
 
-        val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = mpManager.getMediaProjection(resultCode, data)
-        startCapture()
+        val resultCode = intent?.getIntExtra("resultCode", Activity.RESULT_CANCELED) ?: Activity.RESULT_CANCELED
+        val data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent?.getParcelableExtra("data", Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent?.getParcelableExtra("data")
+        }
+
+        if (resultCode == Activity.RESULT_OK && data != null) {
+            val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            mediaProjection = mpManager.getMediaProjection(resultCode, data)
+            startCapture()
+        }
+
         return START_STICKY
     }
 
@@ -92,6 +98,7 @@ class ScreenCaptureService : Service() {
         val height = metrics.heightPixels
         val density = metrics.densityDpi
 
+        // ImageFormat.YUV_420_888 は多くの端末で安定して動作します
         imageReader = ImageReader.newInstance(width, height, ImageFormat.YUV_420_888, 2)
         mediaProjection?.createVirtualDisplay(
             "ocr-cap",
@@ -103,10 +110,11 @@ class ScreenCaptureService : Service() {
         imageReader?.setOnImageAvailableListener({ reader ->
             val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
             try {
+                // ImageUtilを使用してBitmapに変換しOCRを実行
                 val bitmap = ImageUtil.imageToBitmap(image)
                 ocr.processBitmap(bitmap)
             } catch (e: Exception) {
-                Log.w(TAG, "image processing error: ${e.message}")
+                Log.w(TAG, "Image processing error: ${e.message}")
             } finally {
                 image.close()
             }
@@ -115,11 +123,11 @@ class ScreenCaptureService : Service() {
 
     private fun createNotificationChannel(): String {
         val channelId = "hatotyper_channel"
-        val channelName = "hatotyper"
-        val nm = getSystemService(NotificationManager::class.java)
-        if (nm != null) {
-            val ch = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_LOW)
-            nm.createNotificationChannel(ch)
+        val channelName = "Screen Monitoring Service"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(NotificationManager::class.java)
+            val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_LOW)
+            nm?.createNotificationChannel(channel)
         }
         return channelId
     }
