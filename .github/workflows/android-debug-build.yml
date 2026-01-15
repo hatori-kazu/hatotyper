@@ -31,20 +31,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Build (use gradlew if present, otherwise install gradle)
-        shell: bash
-        run: |
-          if [ -f "./gradlew" ]; then
-            echo "Using repository gradlew"
-            chmod +x ./gradlew
-            ./gradlew clean assembleDebug --no-daemon
-          else
-            echo "gradlew not found — installing gradle via apt as fallback"
-            sudo apt-get update -y
-            sudo apt-get install -y gradle
-            gradle --version
-            gradle clean assembleDebug
-          fi
+      - name: Build with Gradle (uses Gradle action to download/run Gradle)
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: clean assembleDebug
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
