@@ -30,7 +30,6 @@ class CalibrationActivity : AppCompatActivity() {
         private const val NOTIFICATION_ID = 100
         const val ACTION_START_OVERLAY = "com.hatori.hatotyper.ACTION_START_OVERLAY"
         
-        // Receiverから静的にアクセスするためのインスタンス保持
         private var instance: CalibrationActivity? = null
         
         fun startOverlayDirectly() {
@@ -53,11 +52,10 @@ class CalibrationActivity : AppCompatActivity() {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         infoTv = findViewById(R.id.tvInfo)
         
-        // --- RecyclerViewの一覧表示と削除設定 ---
         rvKeys = findViewById(R.id.rvRegisteredKeys)
         rvKeys.layoutManager = LinearLayoutManager(this)
         
-        // アダプターの初期化（長押し時の削除処理を渡す）
+        // アダプターの初期化
         keyAdapter = RegisteredKeyAdapter(emptyList()) { charToDelete ->
             showDeleteConfirmDialog(charToDelete)
         }
@@ -86,7 +84,6 @@ class CalibrationActivity : AppCompatActivity() {
         refreshKeyList()
     }
 
-    // 次のキャプチャ準備（通知表示＋ホーム遷移）
     private fun prepareNextCapture(message: String) {
         if (!Settings.canDrawOverlays(this)) {
             val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
@@ -132,7 +129,6 @@ class CalibrationActivity : AppCompatActivity() {
         nm.notify(NOTIFICATION_ID, notification)
     }
 
-    // Receiverから呼ばれるメソッド
     fun triggerOverlayFromReceiver() {
         runOnUiThread {
             startOverlayCapture()
@@ -144,4 +140,91 @@ class CalibrationActivity : AppCompatActivity() {
         capturing = true
 
         val view = View(this).apply {
-            setBackgroundColor(
+            setBackgroundColor(0x33FF0000) 
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_DOWN) {
+                    val tx = event.rawX
+                    val ty = event.rawY
+                    stopOverlay()
+                    showRegisterDialog(tx, ty)
+                }
+                true
+            }
+        }
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        )
+
+        wm.addView(view, params)
+        overlayView = view
+    }
+
+    private fun showRegisterDialog(rawX: Float, rawY: Float) {
+        val intent = Intent(this, CalibrationActivity::class.java)
+        intent.flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+        startActivity(intent)
+
+        val ed = android.widget.EditText(this).apply { hint = "例: a" }
+
+        AlertDialog.Builder(this)
+            .setTitle("座標の登録")
+            .setMessage("タップ座標: (${rawX.roundToInt()}, ${rawY.roundToInt()})")
+            .setView(ed)
+            .setCancelable(false)
+            .setPositiveButton("保存して次へ") { _, _ ->
+                val txt = ed.text.toString().trim()
+                if (txt.isNotEmpty()) {
+                    KeyMapStorage.saveKey(this, txt.substring(0, 1), KeyCoord(rawX, rawY))
+                    refreshKeyList()
+                }
+                prepareNextCapture("保存しました。次の文字を通知から開始してください。")
+            }
+            .setNeutralButton("再選択") { _, _ ->
+                prepareNextCapture("やり直します。通知から開始してください。")
+            }
+            .setNegativeButton("終了", null)
+            .show()
+    }
+
+    private fun showDeleteConfirmDialog(char: String) {
+        AlertDialog.Builder(this)
+            .setTitle("削除の確認")
+            .setMessage("キー '$char' の登録を削除しますか？")
+            .setPositiveButton("削除") { _, _ ->
+                KeyMapStorage.deleteKey(this, char)
+                refreshKeyList()
+                updateInfo("'$char' を削除しました。")
+            }
+            .setNegativeButton("キャンセル", null)
+            .show()
+    }
+
+    private fun refreshKeyList() {
+        val coordsMap = KeyMapStorage.getCoords(this)
+        val sortedList = coordsMap.toList().sortedBy { it.first }
+        keyAdapter.updateData(sortedList)
+    }
+
+    private fun stopOverlay() {
+        overlayView?.let {
+            try { wm.removeView(it) } catch (e: Exception) {}
+            overlayView = null
+        }
+        capturing = false
+    }
+
+    private fun updateInfo(msg: String) {
+        infoTv.text = msg
+    }
+
+    override fun onDestroy() {
+        stopOverlay()
+        instance = null
+        super.onDestroy()
+    }
+}
