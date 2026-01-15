@@ -15,21 +15,25 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 
 class ScreenCaptureService : Service() {
 
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
-    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    
+    // 日本語認識用エンジン
+    private val recognizer = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
     
     private var isAnalyzing = false
     private var lastAnalysisTime = 0L
@@ -48,8 +52,8 @@ class ScreenCaptureService : Service() {
 
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("ハトタイパー稼働中")
-            .setContentText("マッピング照合を実行しています...")
+            .setContentTitle("ハトタイパー日本語版")
+            .setContentText("画面上の日本語をスキャン中...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .build()
 
@@ -62,6 +66,15 @@ class ScreenCaptureService : Service() {
         if (data != null && mediaProjection == null) {
             val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             mediaProjection = mpManager.getMediaProjection(resultCode, data)
+            
+            // システム側の停止を検知して自動終了
+            mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    LogManager.appendLog(TAG, "システムのキャプチャが停止されました")
+                    stopSelf()
+                }
+            }, Handler(Looper.getMainLooper()))
+            
             startCapture()
         }
 
@@ -75,14 +88,16 @@ class ScreenCaptureService : Service() {
             wm.defaultDisplay.getRealMetrics(metrics)
 
             imageReader = ImageReader.newInstance(metrics.widthPixels, metrics.heightPixels, PixelFormat.RGBA_8888, 3)
+            
             virtualDisplay = mediaProjection?.createVirtualDisplay(
                 "HatoDisplay", metrics.widthPixels, metrics.heightPixels, metrics.densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, imageReader?.surface, null, null
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, 
+                imageReader?.surface, null, null
             )
 
             imageReader?.setOnImageAvailableListener({ reader ->
                 val currentTime = System.currentTimeMillis()
-                if (currentTime - lastAnalysisTime < 700 || isAnalyzing) {
+                if (currentTime - lastAnalysisTime < 800 || isAnalyzing) {
                     reader.acquireLatestImage()?.close()
                     return@setOnImageAvailableListener
                 }
@@ -108,6 +123,9 @@ class ScreenCaptureService : Service() {
                     isAnalyzing = false
                 }
             }, null)
+
+            LogManager.appendLog(TAG, "日本語OCRスキャン開始")
+
         } catch (e: Exception) {
             LogManager.appendLog(TAG, "起動エラー: ${e.message}")
         }
@@ -117,7 +135,7 @@ class ScreenCaptureService : Service() {
         val cleanedText = rawText.replace("\n", "").replace(" ", "").trim()
         val allMappings = KeyMapStorage.getAllMappings(this)
         
-        // 画面内にある「有効なマッピングのトリガー」だけを抽出
+        // ターゲット単語が画面にあるか照合
         val matchedTriggers = allMappings.filter { it.isEnabled && cleanedText.contains(it.trigger) }
                                          .map { it.trigger }
 
@@ -125,7 +143,6 @@ class ScreenCaptureService : Service() {
             val combinedID = matchedTriggers.joinToString(",")
             MyAccessibilityService.getInstance()?.processText(combinedID)
         } else {
-            // 何も見つからない場合は空文字を送ってAcc側の状態をリセット
             MyAccessibilityService.getInstance()?.processText("")
         }
     }
@@ -151,7 +168,11 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onDestroy() {
-        virtualDisplay?.release(); mediaProjection?.stop(); imageReader?.close(); recognizer.close()
+        virtualDisplay?.release()
+        imageReader?.close()
+        mediaProjection?.stop()
+        recognizer.close()
+        LogManager.appendLog(TAG, "解析サービス停止完了")
         super.onDestroy()
     }
 }
